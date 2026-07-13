@@ -1,0 +1,51 @@
+name: woodlandstrailguide_flutter
+description: "Woodlands Trail Guide — Android edition"
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.12.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  # State management — Flutter equivalent of SwiftUI @Observable + @Environment.
+  provider: ^6.1.2
+
+  # HTTP for fetching JSON from GitHub Pages
+  http: ^1.2.2
+
+  # UserDefaults equivalent
+  shared_preferences: ^2.3.2
+
+  # Documents directory access
+  path_provider: ^2.1.4
+
+  # Launch URLs (mailto:, https://, App Store)
+  url_launcher: ^6.3.1
+
+  # Google Maps — needs an API key set in AndroidManifest.xml before use.
+  # See README for setup.
+  google_maps_flutter: ^2.10.0
+
+  # GPS access
+  geolocator: ^13.0.1
+
+  # v1.0 additions (kept commented until we need them so pub get stays fast):
+  # in_app_purchase: ^3.2.0        # StoreKit equivalent
+  # google_mobile_ads: ^5.2.0      # AdMob banner
+  # fl_chart: ^0.69.0              # SwiftUI Charts equivalent
+  # image_picker: ^1.1.2           # POI photos
+  # app_links: ^6.3.0              # Deep links (woodlandstrailguide://)
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/data/
