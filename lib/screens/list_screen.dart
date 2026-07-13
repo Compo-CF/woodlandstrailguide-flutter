@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../models/trail_graph.dart';
 import '../stores/trail_store.dart';
 import '../theme/natural_palette.dart';
+import '../widgets/trail_detail_sheet.dart';
 
 /// Trails tab — grouped list of named trails, keyed by village/park.
 /// Mirrors iOS ListTabView.swift.
@@ -93,9 +94,7 @@ class _ListScreenState extends State<ListScreen> {
               subtitle: w.surface != null ? Text(w.surface!) : null,
               trailing: Text('${w.miles.toStringAsFixed(2)} mi',
                   style: const TextStyle(color: NaturalPalette.inkMuted)),
-              onTap: () {
-                // TODO: TrailDetailSheet
-              },
+              onTap: () => TrailDetailSheet.show(context, w),
             )),
       ],
     );

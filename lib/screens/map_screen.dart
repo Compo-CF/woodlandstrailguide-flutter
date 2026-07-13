@@ -1,14 +1,18 @@
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:provider/provider.dart';
 
+import '../models/poi.dart';
 import '../models/trail_graph.dart';
+import '../stores/poi_store.dart';
 import '../stores/trail_store.dart';
 import '../theme/natural_palette.dart';
 
 /// Map tab. Renders every Way in the TrailGraph as a Google Maps
-/// polyline. Pathways get one color/thickness, natural-surface trails
-/// get another. Camera initially centers on the graph's bbox.
+/// polyline, plus POI markers for the interesting categories.
+/// Cycle button toggles Standard / Hybrid / Satellite. Recenter
+/// button jumps to the user's location.
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key});
 
@@ -19,15 +23,53 @@ class MapScreen extends StatefulWidget {
 class _MapScreenState extends State<MapScreen> {
   GoogleMapController? _controller;
   MapType _mapType = MapType.normal;
+  bool _hasLocationPermission = false;
+
+  /// Categories we render as pins on the map. Everything else (benches,
+  /// bike racks, dog bag stations, trail markers, monuments) is data
+  /// we HAVE but don't clutter the map with. Mirrors iOS's
+  /// `alongRouteSkip` filter in reverse.
+  static const _mapCategoryAllow = <String>{
+    'bridges',
+    'restrooms',
+    'water_fountains',
+    'playgrounds',
+    'pavilions',
+    'sports_fields',
+    'parking_park',
+    'parking_lots',
+    'art_benches',
+    'trolley_stops',
+    'picnic_areas',
+  };
+
+  @override
+  void initState() {
+    super.initState();
+    _initLocation();
+  }
+
+  Future<void> _initLocation() async {
+    var perm = await Geolocator.checkPermission();
+    if (perm == LocationPermission.denied) {
+      perm = await Geolocator.requestPermission();
+    }
+    if (!mounted) return;
+    setState(() {
+      _hasLocationPermission = perm == LocationPermission.always ||
+          perm == LocationPermission.whileInUse;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    final store = context.watch<TrailStore>();
-    final graph = store.graph;
+    final trailStore = context.watch<TrailStore>();
+    final poiStore = context.watch<POIStore>();
+    final graph = trailStore.graph;
 
     return Scaffold(
       body: graph == null
-          ? _loadingOrError(store)
+          ? _loadingOrError(trailStore)
           : Stack(
               children: [
                 GoogleMap(
@@ -37,8 +79,9 @@ class _MapScreenState extends State<MapScreen> {
                   ),
                   mapType: _mapType,
                   polylines: _buildPolylines(graph),
+                  markers: _buildMarkers(poiStore.categories),
                   onMapCreated: (c) => _controller = c,
-                  myLocationEnabled: false, // enable after location perms wired
+                  myLocationEnabled: _hasLocationPermission,
                   myLocationButtonEnabled: false,
                   zoomControlsEnabled: false,
                   compassEnabled: true,
@@ -49,10 +92,17 @@ class _MapScreenState extends State<MapScreen> {
                   child: Column(
                     children: [
                       _floatingButton(
-                        icon: _mapType == MapType.normal
-                            ? Icons.map_outlined
-                            : Icons.satellite_alt,
+                        icon: switch (_mapType) {
+                          MapType.normal => Icons.map_outlined,
+                          MapType.hybrid => Icons.satellite_alt,
+                          _ => Icons.public,
+                        },
                         onTap: _cycleMapType,
+                      ),
+                      const SizedBox(height: 10),
+                      _floatingButton(
+                        icon: Icons.my_location,
+                        onTap: _centerOnUser,
                       ),
                     ],
                   ),
@@ -82,11 +132,7 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
-  /// Convert every Way's node indices into a Google Maps Polyline. This
-  /// is the naïve version — no clustering, no simplification. Ships the
-  /// full trail graph (~1,500 ways) to Google Maps' rendering thread.
-  /// If perf tanks on low-end phones we'll add level-of-detail culling
-  /// later, but starting simple.
+  /// Convert every Way into a Google Maps Polyline. Colors mirror iOS.
   Set<Polyline> _buildPolylines(TrailGraph graph) {
     final polys = <Polyline>{};
     for (var i = 0; i < graph.ways.length; i++) {
@@ -110,6 +156,73 @@ class _MapScreenState extends State<MapScreen> {
       ));
     }
     return polys;
+  }
+
+  /// One marker per POI in an allowed category. Skips the noisy
+  /// categories (benches, bike racks, etc.) that would clutter
+  /// the map. Tint approximated to Google's built-in marker hues.
+  Set<Marker> _buildMarkers(List<POICategory> categories) {
+    final markers = <Marker>{};
+    for (final cat in categories) {
+      if (!_mapCategoryAllow.contains(cat.key)) continue;
+      final hue = _hueForCategory(cat.key);
+      final icon = BitmapDescriptor.defaultMarkerWithHue(hue);
+      for (final poi in cat.pois) {
+        markers.add(Marker(
+          markerId: MarkerId('${cat.key}__${poi.id}'),
+          position: LatLng(poi.lat, poi.lon),
+          icon: icon,
+          infoWindow: InfoWindow(
+            title: poi.name ?? cat.label,
+            snippet: [cat.label, poi.park, poi.village]
+                .whereType<String>()
+                .join(' · '),
+          ),
+        ));
+      }
+    }
+    return markers;
+  }
+
+  double _hueForCategory(String key) {
+    switch (key) {
+      case 'playgrounds':
+      case 'sports_fields':
+        return BitmapDescriptor.hueGreen;
+      case 'bridges':
+      case 'water_fountains':
+        return BitmapDescriptor.hueAzure;
+      case 'restrooms':
+        return BitmapDescriptor.hueBlue;
+      case 'pavilions':
+      case 'picnic_areas':
+        return BitmapDescriptor.hueOrange;
+      case 'parking_park':
+      case 'parking_lots':
+        return BitmapDescriptor.hueViolet;
+      case 'art_benches':
+        return BitmapDescriptor.hueMagenta;
+      case 'trolley_stops':
+        return BitmapDescriptor.hueYellow;
+      default:
+        return BitmapDescriptor.hueRed;
+    }
+  }
+
+  Future<void> _centerOnUser() async {
+    if (!_hasLocationPermission) {
+      await _initLocation();
+      if (!_hasLocationPermission) return;
+    }
+    try {
+      final pos = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.high);
+      await _controller?.animateCamera(
+        CameraUpdate.newLatLngZoom(LatLng(pos.latitude, pos.longitude), 16),
+      );
+    } catch (_) {
+      // Silent — GPS unavailable, user off-network, etc.
+    }
   }
 
   void _cycleMapType() {
