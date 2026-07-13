@@ -9,10 +9,13 @@ import '../stores/poi_store.dart';
 import '../stores/trail_store.dart';
 import '../theme/natural_palette.dart';
 
-/// Map tab. Renders every Way in the TrailGraph as a Google Maps
-/// polyline, plus POI markers for the interesting categories.
-/// Cycle button toggles Standard / Hybrid / Satellite. Recenter
-/// button jumps to the user's location.
+/// Map tab. Renders every Way as a Google Maps polyline, plus POI
+/// markers filtered by zoom level so the map isn't buried in pins at
+/// low zoom.
+///
+///   zoom < 13   → parking, playgrounds, restrooms
+///   zoom 13-15  → + pavilions, water fountains, sports fields, picnic areas
+///   zoom ≥ 15   → + bridges, art benches, trolley stops
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key});
 
@@ -25,22 +28,31 @@ class _MapScreenState extends State<MapScreen> {
   MapType _mapType = MapType.normal;
   bool _hasLocationPermission = false;
 
-  /// Categories we render as pins on the map. Everything else (benches,
-  /// bike racks, dog bag stations, trail markers, monuments) is data
-  /// we HAVE but don't clutter the map with. Mirrors iOS's
-  /// `alongRouteSkip` filter in reverse.
-  static const _mapCategoryAllow = <String>{
-    'bridges',
-    'restrooms',
-    'water_fountains',
-    'playgrounds',
-    'pavilions',
-    'sports_fields',
+  /// Current zoom band index — 0 (city), 1 (village), 2 (street). We
+  /// only rebuild markers when the band changes, not on every micro-
+  /// movement of the camera, so panning stays smooth.
+  int _zoomBand = 0;
+
+  static const _cityZoomThreshold = 13.0;
+  static const _streetZoomThreshold = 15.0;
+
+  /// Category priority tiers.
+  static const _tierAlways = <String>{
     'parking_park',
     'parking_lots',
+    'playgrounds',
+    'restrooms',
+  };
+  static const _tierMid = <String>{
+    'pavilions',
+    'water_fountains',
+    'sports_fields',
+    'picnic_areas',
+  };
+  static const _tierDetail = <String>{
+    'bridges',
     'art_benches',
     'trolley_stops',
-    'picnic_areas',
   };
 
   @override
@@ -81,6 +93,7 @@ class _MapScreenState extends State<MapScreen> {
                   polylines: _buildPolylines(graph),
                   markers: _buildMarkers(poiStore.categories),
                   onMapCreated: (c) => _controller = c,
+                  onCameraIdle: _onCameraIdle,
                   myLocationEnabled: _hasLocationPermission,
                   myLocationButtonEnabled: false,
                   zoomControlsEnabled: false,
@@ -107,6 +120,11 @@ class _MapScreenState extends State<MapScreen> {
                     ],
                   ),
                 ),
+                Positioned(
+                  bottom: 20,
+                  left: 20,
+                  child: _zoomHintPill(),
+                ),
               ],
             ),
     );
@@ -132,6 +150,66 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
+  /// Camera stopped moving — recompute what zoom band we're in and
+  /// rebuild markers if it changed. Panning within a band doesn't
+  /// trigger a rebuild.
+  Future<void> _onCameraIdle() async {
+    if (_controller == null) return;
+    try {
+      final zoom = await _controller!.getZoomLevel();
+      final newBand = _bandFor(zoom);
+      if (newBand != _zoomBand && mounted) {
+        setState(() => _zoomBand = newBand);
+      }
+    } catch (_) {
+      // getZoomLevel can fail during controller disposal — ignore.
+    }
+  }
+
+  int _bandFor(double zoom) {
+    if (zoom < _cityZoomThreshold) return 0;
+    if (zoom < _streetZoomThreshold) return 1;
+    return 2;
+  }
+
+  bool _isCategoryVisible(String key) {
+    if (_tierAlways.contains(key)) return true;
+    if (_tierMid.contains(key)) return _zoomBand >= 1;
+    if (_tierDetail.contains(key)) return _zoomBand >= 2;
+    return false; // categories not listed are never shown on the map
+  }
+
+  /// Optional hint pill in the bottom-left that tells users to zoom in
+  /// for more detail at low zoom. Disappears once they zoom past the
+  /// street threshold.
+  Widget _zoomHintPill() {
+    if (_zoomBand >= 2) return const SizedBox.shrink();
+    final text = _zoomBand == 0
+        ? 'Zoom in for more points of interest'
+        : 'Zoom in for bridges and more';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: NaturalPalette.buttonBg,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: const [
+          BoxShadow(color: Color(0x22000000), blurRadius: 4, offset: Offset(0, 2)),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.zoom_in,
+              size: 16, color: NaturalPalette.forest),
+          const SizedBox(width: 6),
+          Text(text,
+              style: const TextStyle(
+                  color: NaturalPalette.ink, fontSize: 12)),
+        ],
+      ),
+    );
+  }
+
   /// Convert every Way into a Google Maps Polyline. Colors mirror iOS.
   Set<Polyline> _buildPolylines(TrailGraph graph) {
     final polys = <Polyline>{};
@@ -149,8 +227,8 @@ class _MapScreenState extends State<MapScreen> {
         polylineId: PolylineId('way_$i'),
         points: coords,
         color: isTrail
-            ? const Color(0xFF6B4A2B) // brown for natural trails
-            : NaturalPalette.forest,   // green for paved pathways
+            ? const Color(0xFF6B4A2B)
+            : NaturalPalette.forest,
         width: isTrail ? 3 : 4,
         geodesic: false,
       ));
@@ -158,13 +236,10 @@ class _MapScreenState extends State<MapScreen> {
     return polys;
   }
 
-  /// One marker per POI in an allowed category. Skips the noisy
-  /// categories (benches, bike racks, etc.) that would clutter
-  /// the map. Tint approximated to Google's built-in marker hues.
   Set<Marker> _buildMarkers(List<POICategory> categories) {
     final markers = <Marker>{};
     for (final cat in categories) {
-      if (!_mapCategoryAllow.contains(cat.key)) continue;
+      if (!_isCategoryVisible(cat.key)) continue;
       final hue = _hueForCategory(cat.key);
       final icon = BitmapDescriptor.defaultMarkerWithHue(hue);
       for (final poi in cat.pois) {
@@ -220,9 +295,7 @@ class _MapScreenState extends State<MapScreen> {
       await _controller?.animateCamera(
         CameraUpdate.newLatLngZoom(LatLng(pos.latitude, pos.longitude), 16),
       );
-    } catch (_) {
-      // Silent — GPS unavailable, user off-network, etc.
-    }
+    } catch (_) {}
   }
 
   void _cycleMapType() {
