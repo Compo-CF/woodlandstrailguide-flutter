@@ -52,9 +52,16 @@ dependencies:
   # Native share sheet for "share a route" links.
   share_plus: ^10.1.3
 
-  # v1.0 additions (kept commented until we need them so pub get stays fast):
-  # in_app_purchase: ^3.2.0        # StoreKit equivalent
-  # google_mobile_ads: ^5.2.0      # AdMob banner
+  # Google Play Billing — remove ads (non-consumable) + 3-tier tip jar
+  # (consumables).
+  in_app_purchase: ^3.2.0
+  # Needed directly for InAppPurchaseAndroidPlatformAddition.consumePurchase
+  # (consuming a purchased tip so the same product can be bought again).
+  in_app_purchase_android: ^0.5.0
+  in_app_purchase_platform_interface: ^1.4.0
+
+  # AdMob banner.
+  google_mobile_ads: ^5.2.0
 
 dev_dependencies:
   flutter_test:

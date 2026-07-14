@@ -9,6 +9,7 @@ import 'dart:async';
 
 import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:provider/provider.dart';
 
 import 'stores/trail_store.dart';
@@ -17,6 +18,7 @@ import 'stores/featured_walk_store.dart';
 import 'stores/user_data_store.dart';
 import 'stores/weather_store.dart';
 import 'services/elevation_service.dart';
+import 'services/iap_store.dart';
 import 'services/poi_photo_store.dart';
 import 'services/routing_bridge.dart';
 import 'state/routing_state.dart';
@@ -27,6 +29,10 @@ import 'screens/about_screen.dart';
 import 'theme/natural_palette.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Ads start loading immediately; the AdMobBannerView call sites kick
+  // off individual requests when shown.
+  MobileAds.instance.initialize();
   runApp(const WoodlandsTrailGuideApp());
 }
 
@@ -54,7 +60,8 @@ class WoodlandsTrailGuideApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => RoutingState()),
         ChangeNotifierProvider(create: (_) => WeatherStore()..refresh()),
         ChangeNotifierProvider(create: (_) => ElevationService()..load()),
-        ChangeNotifierProvider(create: (_) => POIPhotoStore()),
+        ChangeNotifierProvider(create: (_) => POIPhotoStore()..load()),
+        ChangeNotifierProvider(create: (_) => IAPStore()..init()),
       ],
       child: MaterialApp(
         title: 'Woodlands Trail Guide',

@@ -6,6 +6,9 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
     <!-- Photo picker for POI photos (local-only, never uploaded). -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
+    <!-- Google Play Billing (in_app_purchase plugin also auto-merges this,
+         declared explicitly for clarity). -->
+    <uses-permission android:name="com.android.vending.BILLING"/>
 
     <application
         android:label="Woodlands Trail Guide"
@@ -17,6 +20,16 @@
         <meta-data
             android:name="com.google.android.geo.API_KEY"
             android:value="AIzaSyBeonDXHhgPNczFoR-ilpzTl2ZvzOecKE0"/>
+
+        <!-- AdMob App ID — this is GOOGLE'S OFFICIAL TEST APP ID, safe to
+             ship during development (shows clearly-labeled test ads only,
+             never flagged by Google). Replace with the real Android App ID
+             once registered in AdMob — the existing iOS App ID does NOT
+             carry over; Android needs its own app entry in the same
+             publisher account. See README.md "AdMob setup". -->
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="ca-app-pub-3940256099942544~3347511713"/>
 
         <activity
             android:name=".MainActivity"

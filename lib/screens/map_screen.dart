@@ -10,6 +10,7 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import '../models/poi.dart';
 import '../models/trail_graph.dart';
 import '../services/elevation_service.dart';
+import '../services/iap_store.dart';
 import '../services/router.dart';
 import '../services/routing_bridge.dart';
 import '../state/routing_state.dart';
@@ -18,6 +19,7 @@ import '../stores/trail_store.dart';
 import '../stores/user_data_store.dart';
 import '../stores/weather_store.dart';
 import '../theme/natural_palette.dart';
+import '../widgets/admob_banner.dart';
 import '../widgets/loop_builder_sheet.dart';
 import '../widgets/navigation_banner.dart';
 import '../widgets/poi_detail_sheet.dart';
@@ -157,6 +159,7 @@ class _MapScreenState extends State<MapScreen> {
     final routing = context.watch<RoutingState>();
     final weatherStore = context.watch<WeatherStore>();
     final elevationService = context.watch<ElevationService>();
+    final iap = context.watch<IAPStore>();
     final graph = trailStore.graph;
 
     // A pending route arrived (deep link or Featured Walks' "Walk this
@@ -172,7 +175,26 @@ class _MapScreenState extends State<MapScreen> {
     return Scaffold(
       body: graph == null
           ? _loadingOrError(trailStore)
-          : Stack(
+          : Column(
+              children: [
+                Expanded(child: _mapStack(graph, poiStore, routing, weatherStore, elevationService)),
+                // Sits below the map content like iOS's
+                // safeAreaInset(edge: .bottom) — always visible, never
+                // covered by the route summary card or nav banner.
+                if (!iap.hasRemovedAds) const AdMobBannerView(),
+              ],
+            ),
+    );
+  }
+
+  Widget _mapStack(
+    TrailGraph graph,
+    POIStore poiStore,
+    RoutingState routing,
+    WeatherStore weatherStore,
+    ElevationService elevationService,
+  ) {
+    return Stack(
               children: [
                 GoogleMap(
                   initialCameraPosition: CameraPosition(
@@ -296,8 +318,7 @@ class _MapScreenState extends State<MapScreen> {
                     child: Center(child: const RerouteToast()),
                   ),
               ],
-            ),
-    );
+            );
   }
 
   Widget _loadingOrError(TrailStore store) {

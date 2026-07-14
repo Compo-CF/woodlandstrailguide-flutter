@@ -3,15 +3,26 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../services/iap_store.dart';
 import '../stores/user_data_store.dart';
 import '../theme/natural_palette.dart';
+import '../widgets/tip_jar_sheet.dart';
 
-class AboutScreen extends StatelessWidget {
+class AboutScreen extends StatefulWidget {
   const AboutScreen({super.key});
+
+  @override
+  State<AboutScreen> createState() => _AboutScreenState();
+}
+
+class _AboutScreenState extends State<AboutScreen> {
+  bool _isPurchasingRemoveAds = false;
+  bool _isRestoring = false;
 
   @override
   Widget build(BuildContext context) {
     final userData = context.watch<UserDataStore>();
+    final iap = context.watch<IAPStore>();
     final stats = userData.tripStats;
     final dateFormat = DateFormat('MM/dd/yy');
 
@@ -43,8 +54,7 @@ class AboutScreen extends StatelessWidget {
               children: [
                 _statCell(stats.longestMiles.toStringAsFixed(2), 'longest'),
                 _statDivider(),
-                _statCell('${stats.currentStreakDays}',
-                    stats.currentStreakDays == 1 ? 'day streak' : 'day streak'),
+                _statCell('${stats.currentStreakDays}', 'day streak'),
               ],
             ),
             const SizedBox(height: 24),
@@ -92,6 +102,77 @@ class AboutScreen extends StatelessWidget {
             'Trail and amenity data is sourced from The Woodlands Township\'s '
             'public ArcGIS GIS services. The app refreshes its local copy every '
             'launch, so newly-added trails appear automatically.',
+          ),
+          const SizedBox(height: 24),
+          const _SectionTitle('Support the developer'),
+          ListTile(
+            leading: const Icon(Icons.coffee, color: NaturalPalette.route),
+            title: const Text('Send a tip'),
+            subtitle: iap.tipCount > 0
+                ? Text("You've supported ${iap.tipCount} time${iap.tipCount == 1 ? '' : 's'} — thank you",
+                    style: const TextStyle(color: NaturalPalette.forest))
+                : null,
+            onTap: () => showModalBottomSheet<void>(
+              context: context,
+              isScrollControlled: true,
+              backgroundColor: NaturalPalette.cardBg,
+              shape: const RoundedRectangleBorder(
+                borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+              ),
+              builder: (_) => const TipJarSheet(),
+            ),
+          ),
+          const SizedBox(height: 24),
+          const _SectionTitle('Remove ads'),
+          if (iap.hasRemovedAds)
+            const ListTile(
+              leading: Icon(Icons.check_circle, color: NaturalPalette.forest),
+              title: Text('Ads removed'),
+              trailing: Text('Thanks!',
+                  style: TextStyle(color: NaturalPalette.inkMuted, fontSize: 12)),
+            )
+          else if (iap.removeAdsProduct != null)
+            ListTile(
+              leading: const Icon(Icons.block, color: NaturalPalette.forest),
+              title: const Text('Remove ads'),
+              subtitle: const Text('Permanently hide the banner. One-time purchase.'),
+              trailing: _isPurchasingRemoveAds
+                  ? const SizedBox(
+                      width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                  : Text(iap.removeAdsProduct!.price,
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+              onTap: _isPurchasingRemoveAds
+                  ? null
+                  : () async {
+                      setState(() => _isPurchasingRemoveAds = true);
+                      await iap.purchase(iap.removeAdsProduct!);
+                      if (mounted) setState(() => _isPurchasingRemoveAds = false);
+                    },
+            )
+          else
+            ListTile(
+              leading: const Icon(Icons.block, color: NaturalPalette.inkMuted),
+              title: const Text('Remove ads', style: TextStyle(color: NaturalPalette.inkMuted)),
+              trailing: iap.isLoading
+                  ? const SizedBox(
+                      width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Text('Unavailable',
+                      style: TextStyle(color: NaturalPalette.inkMuted, fontSize: 12)),
+            ),
+          ListTile(
+            leading: const Icon(Icons.refresh, color: NaturalPalette.forest),
+            title: const Text('Restore purchases'),
+            trailing: _isRestoring
+                ? const SizedBox(
+                    width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                : null,
+            onTap: _isRestoring
+                ? null
+                : () async {
+                    setState(() => _isRestoring = true);
+                    await iap.restorePurchases();
+                    if (mounted) setState(() => _isRestoring = false);
+                  },
           ),
           const SizedBox(height: 24),
           const _SectionTitle('Help & feedback'),
