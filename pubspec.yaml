@@ -60,8 +60,12 @@ dependencies:
   in_app_purchase_android: ^0.5.0
   in_app_purchase_platform_interface: ^1.4.0
 
-  # AdMob banner.
-  google_mobile_ads: ^5.2.0
+  # AdMob banner. Pinned >=5.2.0 <10.0.0 (not ^5.2.0) because 5.x's
+  # own build.gradle references a "configurations.all" property that
+  # doesn't resolve under the Gradle/AGP version this project uses —
+  # fails with "Could not get unknown property 'all'" at bundleRelease
+  # time. Fixed in later majors; let pub resolve the newest compatible.
+  google_mobile_ads: ">=5.2.0 <10.0.0"
 
 dev_dependencies:
   flutter_test:
