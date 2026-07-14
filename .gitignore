@@ -44,6 +44,12 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
+# Gradle's native build output (module-level and root-level) — got
+# accidentally committed once via `git add -A` right after a build.
+/android/build/
+/android/app/build/
+**/android/*/build/
+
 # Signing config — contains the keystore password. NEVER COMMIT.
 /android/key.properties
 *.jks
