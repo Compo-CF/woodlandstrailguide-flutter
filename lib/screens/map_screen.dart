@@ -4,11 +4,14 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:provider/provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../models/poi.dart';
 import '../models/trail_graph.dart';
+import '../services/elevation_service.dart';
 import '../services/router.dart';
+import '../services/routing_bridge.dart';
 import '../state/routing_state.dart';
 import '../stores/poi_store.dart';
 import '../stores/trail_store.dart';
@@ -153,7 +156,18 @@ class _MapScreenState extends State<MapScreen> {
     final poiStore = context.watch<POIStore>();
     final routing = context.watch<RoutingState>();
     final weatherStore = context.watch<WeatherStore>();
+    final elevationService = context.watch<ElevationService>();
     final graph = trailStore.graph;
+
+    // A pending route arrived (deep link or Featured Walks' "Walk this
+    // route") — resolve it to graph nodes and apply it. Scheduled for
+    // after this frame since applying calls notifyListeners() on
+    // RoutingState, which we're currently mid-build for.
+    if (graph != null && routing.pending != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _applyPendingRoute(graph, routing);
+      });
+    }
 
     return Scaffold(
       body: graph == null
@@ -259,6 +273,8 @@ class _MapScreenState extends State<MapScreen> {
                       onStartWalking: () => _startNavigation(routing),
                       onClear: () => routing.clearRoute(),
                       onAddWaypoint: () => routing.toggleWaypointMode(),
+                      onShare: () => _shareRoute(graph, routing),
+                      elevationProfile: elevationService.profile(routing.route!, graph),
                     ),
                   ),
                 if (routing.navigationActive)
@@ -502,6 +518,51 @@ class _MapScreenState extends State<MapScreen> {
         routing.applyStops([start, far, start], graph);
       } catch (_) {}
     });
+  }
+
+  /// Resolves a pending route (from a deep link or Featured Walks) to
+  /// graph nodes and applies it. Idempotent — clearPending() runs
+  /// first so a second post-frame callback scheduled before this one
+  /// finished is a no-op.
+  void _applyPendingRoute(TrailGraph graph, RoutingState routing) {
+    final pending = routing.pending;
+    if (pending == null) return;
+    routing.clearPending();
+    final router = TrailRouter(graph);
+    final start = router.nearestNode(pending.startLat, pending.startLon);
+    final end = router.nearestNode(pending.endLat, pending.endLon);
+    if (start == null || end == null) return;
+    final waypoints = pending.waypoints
+        .map((w) => router.nearestNode(w[0], w[1]))
+        .whereType<int>()
+        .toList();
+    routing.applyStops([start, ...waypoints, end], graph);
+  }
+
+  /// Builds a woodlandstrailguide://route deep link for the current
+  /// route and opens the native share sheet. Mirrors iOS's ShareLink
+  /// wired to RoutingBridge.buildShareURL.
+  Future<void> _shareRoute(TrailGraph graph, RoutingState routing) async {
+    final start = routing.startNode;
+    final end = routing.endNode;
+    if (start == null || end == null) return;
+    final startCoord = graph.nodes[start];
+    final endCoord = graph.nodes[end];
+    final waypoints = routing.waypointNodes
+        .map((n) => [graph.nodes[n].lat, graph.nodes[n].lon])
+        .toList();
+    final url = RoutingBridge.buildShareUrl(
+      startLat: startCoord.lat,
+      startLon: startCoord.lon,
+      endLat: endCoord.lat,
+      endLon: endCoord.lon,
+      waypoints: waypoints,
+    );
+    final miles = routing.route?.miles ?? 0;
+    await Share.share(
+      'Check out this ${miles.toStringAsFixed(1)} mi walk in The '
+      'Woodlands — open it in Woodlands Trail Guide:\n$url',
+    );
   }
 
   Future<void> _onCameraIdle() async {

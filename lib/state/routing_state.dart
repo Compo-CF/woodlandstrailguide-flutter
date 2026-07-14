@@ -47,6 +47,13 @@ class RoutingState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Sets a fully-formed PendingRoute directly — used by the deep-link
+  /// handler (RoutingBridge.parse already produced one).
+  void setPending(PendingRoute route) {
+    pending = route;
+    notifyListeners();
+  }
+
   void clearPending() {
     pending = null;
   }

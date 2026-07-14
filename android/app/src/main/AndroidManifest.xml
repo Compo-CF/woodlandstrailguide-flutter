@@ -4,6 +4,8 @@
     <!-- Location — used to show the user's position on the trails and follow the route. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+    <!-- Photo picker for POI photos (local-only, never uploaded). -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
 
     <application
         android:label="Woodlands Trail Guide"
@@ -36,6 +38,14 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+            <!-- Share-a-route deep link:
+                 woodlandstrailguide://route?start=LAT,LON&end=LAT,LON&via=LAT,LON|LAT,LON -->
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="woodlandstrailguide" android:host="route"/>
             </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.

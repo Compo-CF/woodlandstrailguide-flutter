@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 
+import '../services/elevation_service.dart';
 import '../services/router.dart';
 import '../theme/natural_palette.dart';
+import 'elevation_chart.dart';
 
 /// Bottom card shown once a route is computed. Mirrors iOS
 /// MapTabView's routeSummaryCard: distance, walking time estimate,
-/// named segments ("Route" chips), parks passed through, and the
-/// primary action buttons (Start walking / Clear).
+/// elevation profile, named segments ("Route" chips), parks passed
+/// through, and the primary action buttons (Start walking / Clear).
 class RouteSummaryCard extends StatelessWidget {
   final RouteResult route;
   final VoidCallback onStartWalking;
@@ -14,6 +16,7 @@ class RouteSummaryCard extends StatelessWidget {
   final VoidCallback? onAddWaypoint;
   final VoidCallback? onBuildLoop;
   final VoidCallback? onShare;
+  final ElevationProfile? elevationProfile;
 
   const RouteSummaryCard({
     super.key,
@@ -23,6 +26,7 @@ class RouteSummaryCard extends StatelessWidget {
     this.onAddWaypoint,
     this.onBuildLoop,
     this.onShare,
+    this.elevationProfile,
   });
 
   /// Average walking speed ~3 mph -> minutes = miles / 3 * 60.
@@ -74,6 +78,10 @@ class RouteSummaryCard extends StatelessWidget {
                   ),
                 ],
               ),
+              if (elevationProfile != null) ...[
+                const SizedBox(height: 14),
+                ElevationChartView(profile: elevationProfile!),
+              ],
               if (route.namedSegments.isNotEmpty) ...[
                 const SizedBox(height: 10),
                 _chipSection('Route', route.namedSegments.map((s) => s.name).toList(),
