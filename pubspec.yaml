@@ -37,6 +37,9 @@ dependencies:
   # equivalent of iOS's UIApplication.isIdleTimerDisabled.
   wakelock_plus: ^1.2.8
 
+  # Date formatting for the trip log (About tab).
+  intl: ^0.19.0
+
   # v1.0 additions (kept commented until we need them so pub get stays fast):
   # in_app_purchase: ^3.2.0        # StoreKit equivalent
   # google_mobile_ads: ^5.2.0      # AdMob banner

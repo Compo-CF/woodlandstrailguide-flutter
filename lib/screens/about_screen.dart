@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../stores/user_data_store.dart';
 import '../theme/natural_palette.dart';
 
 class AboutScreen extends StatelessWidget {
@@ -8,6 +11,10 @@ class AboutScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final userData = context.watch<UserDataStore>();
+    final stats = userData.tripStats;
+    final dateFormat = DateFormat('MM/dd/yy');
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('About'),
@@ -21,6 +28,64 @@ class AboutScreen extends StatelessWidget {
             'A community-built map of The Woodlands\' hike-and-bike pathways. '
             'Built by a local on nights and weekends — feedback welcome.',
           ),
+          if (!stats.isEmpty) ...[
+            const SizedBox(height: 24),
+            const _SectionTitle('Your walking stats'),
+            Row(
+              children: [
+                _statCell(stats.totalMiles.toStringAsFixed(1), 'miles walked'),
+                _statDivider(),
+                _statCell('${stats.walkCount}', 'walks'),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                _statCell(stats.longestMiles.toStringAsFixed(2), 'longest'),
+                _statDivider(),
+                _statCell('${stats.currentStreakDays}',
+                    stats.currentStreakDays == 1 ? 'day streak' : 'day streak'),
+              ],
+            ),
+            const SizedBox(height: 24),
+            const _SectionTitle('Recent walks'),
+            ...userData.tripLog.take(10).map((trip) => Dismissible(
+                  key: ValueKey(trip.id),
+                  direction: DismissDirection.endToStart,
+                  background: Container(
+                    alignment: Alignment.centerRight,
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    color: NaturalPalette.route,
+                    child: const Icon(Icons.delete_outline, color: Colors.white),
+                  ),
+                  onDismissed: (_) => userData.deleteTrip(trip.id),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Text('${trip.miles.toStringAsFixed(2)} mi',
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    color: NaturalPalette.ink)),
+                            const Spacer(),
+                            Text(dateFormat.format(trip.date),
+                                style: const TextStyle(
+                                    fontSize: 12, color: NaturalPalette.inkMuted)),
+                          ],
+                        ),
+                        Text('${trip.startLabel} → ${trip.endLabel}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                fontSize: 12, color: NaturalPalette.inkMuted)),
+                      ],
+                    ),
+                  ),
+                )),
+          ],
           const SizedBox(height: 24),
           const _SectionTitle('Data'),
           const Text(
@@ -64,6 +129,31 @@ class AboutScreen extends StatelessWidget {
       ),
     );
   }
+
+  Widget _statCell(String number, String label) {
+    return Expanded(
+      child: Column(
+        children: [
+          Text(number,
+              style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                  color: NaturalPalette.ink)),
+          Text(label.toUpperCase(),
+              style: const TextStyle(
+                  fontSize: 10,
+                  letterSpacing: 0.5,
+                  color: NaturalPalette.inkMuted)),
+        ],
+      ),
+    );
+  }
+
+  Widget _statDivider() => Container(
+        width: 1,
+        height: 34,
+        color: NaturalPalette.hairline,
+      );
 
   Future<void> _launch(String url) async {
     final uri = Uri.parse(url);

@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 import '../models/trail_graph.dart';
+import '../stores/user_data_store.dart';
 import '../theme/natural_palette.dart';
 
 /// Modal bottom sheet showing a Way's details. Mirrors iOS
-/// TrailDetailSheet.swift.
+/// TrailDetailSheet.swift, including the favorite-heart toggle.
 class TrailDetailSheet extends StatelessWidget {
   final Way way;
   const TrailDetailSheet({super.key, required this.way});
@@ -26,6 +28,8 @@ class TrailDetailSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final title = way.name ?? 'Trail segment';
+    final userData = context.watch<UserDataStore>();
+    final isFavorite = userData.isFavorite(way.favoriteKey);
     return DraggableScrollableSheet(
       expand: false,
       initialChildSize: 0.5,
@@ -40,11 +44,25 @@ class TrailDetailSheet extends StatelessWidget {
             children: [
               _dragHandle(),
               const SizedBox(height: 8),
-              Text(title,
-                  style: const TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.w700,
-                      color: NaturalPalette.ink)),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Text(title,
+                        style: const TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.w700,
+                            color: NaturalPalette.ink)),
+                  ),
+                  IconButton(
+                    onPressed: () => userData.toggleFavorite(way.favoriteKey),
+                    icon: Icon(
+                      isFavorite ? Icons.favorite : Icons.favorite_border,
+                      color: isFavorite ? NaturalPalette.route : NaturalPalette.forest,
+                    ),
+                  ),
+                ],
+              ),
               const SizedBox(height: 4),
               Text(way.kind == 'trail' ? 'Natural trail' : 'Paved pathway',
                   style: const TextStyle(

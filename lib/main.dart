@@ -11,6 +11,7 @@ import 'package:provider/provider.dart';
 import 'stores/trail_store.dart';
 import 'stores/poi_store.dart';
 import 'stores/featured_walk_store.dart';
+import 'stores/user_data_store.dart';
 import 'state/routing_state.dart';
 import 'screens/map_screen.dart';
 import 'screens/list_screen.dart';
@@ -35,6 +36,14 @@ class WoodlandsTrailGuideApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => TrailStore()..load()),
         ChangeNotifierProvider(create: (_) => POIStore()..load()),
         ChangeNotifierProvider(create: (_) => FeaturedWalkStore()..load()),
+        ChangeNotifierProvider(create: (_) {
+          // load() must finish before recordAppLaunch() — the cascade
+          // operator doesn't await, and recordAppLaunch touches state
+          // that load() is responsible for populating.
+          final store = UserDataStore();
+          store.load().then((_) => store.recordAppLaunch());
+          return store;
+        }),
         ChangeNotifierProvider(create: (_) => RoutingState()),
       ],
       child: MaterialApp(

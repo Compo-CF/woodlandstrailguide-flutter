@@ -134,4 +134,9 @@ class Way {
       );
 
   double get miles => lengthMeters / 1609.344;
+
+  /// Stable key for favoriting this Way. Prefers the Township pathway
+  /// reference (stable across data refreshes); short unnamed connectors
+  /// without one fall back to the display name.
+  String get favoriteKey => pathwayID ?? name ?? 'unnamed';
 }

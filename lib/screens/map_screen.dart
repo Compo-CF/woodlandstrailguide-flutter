@@ -12,6 +12,7 @@ import '../services/router.dart';
 import '../state/routing_state.dart';
 import '../stores/poi_store.dart';
 import '../stores/trail_store.dart';
+import '../stores/user_data_store.dart';
 import '../theme/natural_palette.dart';
 import '../widgets/loop_builder_sheet.dart';
 import '../widgets/navigation_banner.dart';
@@ -55,6 +56,11 @@ class _MapScreenState extends State<MapScreen> {
   DateTime? _offRouteSince;
   bool _showingRerouteToast = false;
   StreamSubscription<Position>? _positionSub;
+
+  /// Tracks the arrived->not-arrived edge so recordTrip()/
+  /// markRouteCompleted() fire exactly once per completed walk, not on
+  /// every position update after arrival.
+  bool _wasArrived = false;
 
   /// Best-effort last-known position, used only to show "X mi from you"
   /// in the POI detail sheet. Not authoritative for navigation math —
@@ -267,6 +273,7 @@ class _MapScreenState extends State<MapScreen> {
   /// detection + camera follow.
   Future<void> _startNavigation(RoutingState routing) async {
     routing.startNavigation();
+    _wasArrived = false;
     unawaited(WakelockPlus.enable());
     await _positionSub?.cancel();
     _positionSub = Geolocator.getPositionStream(
@@ -295,6 +302,21 @@ class _MapScreenState extends State<MapScreen> {
     final router = TrailRouter(graph);
     final progress = router.progress(routing.route!, pos.latitude, pos.longitude);
     routing.updateProgress(progress);
+
+    // First time this walk hits "arrived" — record it. Guarded by
+    // _wasArrived so it fires exactly once per completed route, not on
+    // every subsequent position update after arrival.
+    if (!_wasArrived && progress.isArrived) {
+      _wasArrived = true;
+      final userData = context.read<UserDataStore>();
+      final r = routing.route!;
+      userData.markRouteCompleted();
+      userData.recordTrip(
+        distanceMeters: r.lengthMeters,
+        startLabel: r.namedSegments.isNotEmpty ? r.namedSegments.first.name : 'Start',
+        endLabel: r.namedSegments.isNotEmpty ? r.namedSegments.last.name : 'Destination',
+      );
+    }
 
     _controller?.animateCamera(
       CameraUpdate.newLatLng(LatLng(pos.latitude, pos.longitude)),
