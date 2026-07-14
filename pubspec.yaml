@@ -33,6 +33,10 @@ dependencies:
   # GPS access
   geolocator: ^13.0.1
 
+  # Keeps the screen on during turn-by-turn navigation — Android
+  # equivalent of iOS's UIApplication.isIdleTimerDisabled.
+  wakelock_plus: ^1.2.8
+
   # v1.0 additions (kept commented until we need them so pub get stays fast):
   # in_app_purchase: ^3.2.0        # StoreKit equivalent
   # google_mobile_ads: ^5.2.0      # AdMob banner

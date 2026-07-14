@@ -101,6 +101,18 @@ class RoutingState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Applies an off-route auto-reroute: new start node (snapped to the
+  /// user's current position), the freshly-computed route, and initial
+  /// progress against it. Waypoints are dropped — the user has already
+  /// moved past whatever waypoint context existed.
+  void applyReroute(int newStart, RouteResult rerouted, RouteProgress progress) {
+    startNode = newStart;
+    waypointNodes = [];
+    route = rerouted;
+    routeProgress = progress;
+    notifyListeners();
+  }
+
   void startNavigation() {
     navigationActive = true;
     notifyListeners();

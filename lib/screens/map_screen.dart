@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:provider/provider.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../models/poi.dart';
 import '../models/trail_graph.dart';
@@ -10,6 +13,7 @@ import '../state/routing_state.dart';
 import '../stores/poi_store.dart';
 import '../stores/trail_store.dart';
 import '../theme/natural_palette.dart';
+import '../widgets/navigation_banner.dart';
 import '../widgets/route_summary_card.dart';
 
 /// Map tab. Renders every Way as a Google Maps polyline, plus POI
@@ -37,6 +41,16 @@ class _MapScreenState extends State<MapScreen> {
   int _zoomBand = 0;
   static const _cityZoomThreshold = 13.0;
   static const _streetZoomThreshold = 15.0;
+
+  /// Off-route auto-reroute: if the user drifts more than this many
+  /// meters from the route for longer than the sustained duration, we
+  /// silently recompute from their current position to the same
+  /// destination. Mirrors iOS's offRouteThreshold/offRouteDuration.
+  static const _offRouteThreshold = 100.0;
+  static const _offRouteDuration = Duration(seconds: 8);
+  DateTime? _offRouteSince;
+  bool _showingRerouteToast = false;
+  StreamSubscription<Position>? _positionSub;
 
   static const _tierAlways = <String>{
     'parking_park',
@@ -69,6 +83,13 @@ class _MapScreenState extends State<MapScreen> {
       final routing = context.read<RoutingState>();
       if (!routing.routingMode) routing.enterRoutingMode();
     }
+  }
+
+  @override
+  void dispose() {
+    _positionSub?.cancel();
+    WakelockPlus.disable();
+    super.dispose();
   }
 
   Future<void> _initLocation() async {
@@ -168,7 +189,7 @@ class _MapScreenState extends State<MapScreen> {
                     bottom: 0,
                     child: RouteSummaryCard(
                       route: routing.route!,
-                      onStartWalking: () => routing.startNavigation(),
+                      onStartWalking: () => _startNavigation(routing),
                       onClear: () => routing.clearRoute(),
                       onAddWaypoint: () => routing.toggleWaypointMode(),
                     ),
@@ -178,7 +199,18 @@ class _MapScreenState extends State<MapScreen> {
                     left: 0,
                     right: 0,
                     bottom: 0,
-                    child: _navigatingBar(routing),
+                    child: NavigationBanner(
+                      route: routing.route!,
+                      progress: routing.routeProgress,
+                      onEnd: () => _endNavigation(routing),
+                    ),
+                  ),
+                if (_showingRerouteToast)
+                  Positioned(
+                    top: 100,
+                    left: 0,
+                    right: 0,
+                    child: Center(child: const RerouteToast()),
                   ),
               ],
             ),
@@ -205,38 +237,69 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
-  /// Temporary compact nav bar shown while navigationActive. Full
-  /// turn-by-turn instruction banner + off-route reroute lands in the
-  /// next batch; this keeps "Start walking" functional in the
-  /// meantime (remaining distance + End button).
-  Widget _navigatingBar(RoutingState routing) {
-    final remaining = routing.route!.lengthMeters;
-    final miles = remaining / 1609.344;
-    return Container(
-      color: NaturalPalette.route,
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-      child: SafeArea(
-        top: false,
-        child: Row(
-          children: [
-            const Icon(Icons.navigation, color: Colors.white),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                'Navigating — ${miles.toStringAsFixed(2)} mi total',
-                style: const TextStyle(
-                    color: Colors.white, fontWeight: FontWeight.w600),
-              ),
-            ),
-            TextButton(
-              onPressed: () => routing.endNavigation(),
-              style: TextButton.styleFrom(foregroundColor: Colors.white),
-              child: const Text('End'),
-            ),
-          ],
-        ),
+  /// Enter live navigation: mark RoutingState active, keep the screen
+  /// on for the duration (mirrors iOS's isIdleTimerDisabled toggle),
+  /// and start a GPS stream that drives route progress + off-route
+  /// detection + camera follow.
+  Future<void> _startNavigation(RoutingState routing) async {
+    routing.startNavigation();
+    unawaited(WakelockPlus.enable());
+    await _positionSub?.cancel();
+    _positionSub = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 3,
       ),
+    ).listen(_onPositionUpdate);
+  }
+
+  Future<void> _endNavigation(RoutingState routing) async {
+    await _positionSub?.cancel();
+    _positionSub = null;
+    unawaited(WakelockPlus.disable());
+    _offRouteSince = null;
+    routing.endNavigation();
+  }
+
+  void _onPositionUpdate(Position pos) {
+    if (!mounted) return;
+    final routing = context.read<RoutingState>();
+    final graph = context.read<TrailStore>().graph;
+    if (graph == null || routing.route == null || !routing.navigationActive) return;
+
+    final router = TrailRouter(graph);
+    final progress = router.progress(routing.route!, pos.latitude, pos.longitude);
+    routing.updateProgress(progress);
+
+    _controller?.animateCamera(
+      CameraUpdate.newLatLng(LatLng(pos.latitude, pos.longitude)),
     );
+
+    // Off-route auto-reroute: if the user has drifted past the threshold
+    // for the sustained duration, silently recompute from their current
+    // position to the same destination. Waypoints are dropped.
+    if (progress.distanceFromRoute > _offRouteThreshold && !progress.isArrived) {
+      _offRouteSince ??= DateTime.now();
+      if (DateTime.now().difference(_offRouteSince!) > _offRouteDuration &&
+          routing.endNode != null) {
+        final newStart = router.nearestNode(pos.latitude, pos.longitude);
+        if (newStart != null) {
+          final rerouted = router.route(newStart, routing.endNode!);
+          if (rerouted != null) {
+            final newProgress =
+                router.progress(rerouted, pos.latitude, pos.longitude);
+            routing.applyReroute(newStart, rerouted, newProgress);
+            _offRouteSince = null;
+            setState(() => _showingRerouteToast = true);
+            Future.delayed(const Duration(milliseconds: 2500), () {
+              if (mounted) setState(() => _showingRerouteToast = false);
+            });
+          }
+        }
+      }
+    } else {
+      _offRouteSince = null;
+    }
   }
 
   void _toggleRouting(RoutingState routing) {
