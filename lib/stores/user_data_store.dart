@@ -21,6 +21,13 @@ class UserDataStore extends ChangeNotifier {
 
   SharedPreferences? _prefs;
 
+  /// True once load() has populated state from disk. Callers that need
+  /// to distinguish "hasn't loaded yet" from "genuinely false" (e.g.
+  /// deciding whether to show onboarding) should gate on this first —
+  /// hasSeenOnboarding defaults to false before load() finishes, which
+  /// looks identical to a real first-launch otherwise.
+  bool isLoaded = false;
+
   Set<String> favoriteWayIDs = {};
   int appLaunches = 0;
   int routesCompleted = 0;
@@ -45,6 +52,7 @@ class UserDataStore extends ChangeNotifier {
         tripLog = [];
       }
     }
+    isLoaded = true;
     notifyListeners();
   }
 

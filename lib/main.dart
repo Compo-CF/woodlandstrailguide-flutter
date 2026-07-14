@@ -26,6 +26,7 @@ import 'screens/map_screen.dart';
 import 'screens/list_screen.dart';
 import 'screens/featured_screen.dart';
 import 'screens/about_screen.dart';
+import 'screens/onboarding_screen.dart';
 import 'theme/natural_palette.dart';
 
 void main() {
@@ -97,6 +98,8 @@ class _RootTabShellState extends State<RootTabShell> {
   final _appLinks = AppLinks();
   StreamSubscription<Uri>? _linkSub;
   late final RoutingState _routingState;
+  late final UserDataStore _userDataStore;
+  bool _onboardingShown = false;
 
   @override
   void initState() {
@@ -108,12 +111,34 @@ class _RootTabShellState extends State<RootTabShell> {
     // onChange(of: routingBridge.pending).
     _routingState.addListener(_onRoutingChanged);
     _initDeepLinks();
+
+    _userDataStore = context.read<UserDataStore>();
+    _userDataStore.addListener(_checkOnboarding);
+    _checkOnboarding();
   }
 
   void _onRoutingChanged() {
     if (_routingState.pending != null && _index != 0 && mounted) {
       setState(() => _index = 0);
     }
+  }
+
+  /// Shows the first-run walkthrough once UserDataStore has finished
+  /// loading from disk (gating on isLoaded, not just hasSeenOnboarding,
+  /// avoids a false-positive flash for returning users before their
+  /// SharedPreferences read completes).
+  void _checkOnboarding() {
+    if (_onboardingShown) return;
+    if (!_userDataStore.isLoaded) return;
+    if (_userDataStore.hasSeenOnboarding) return;
+    _onboardingShown = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      Navigator.of(context).push(MaterialPageRoute<void>(
+        fullscreenDialog: true,
+        builder: (_) => const OnboardingScreen(),
+      ));
+    });
   }
 
   Future<void> _initDeepLinks() async {
@@ -133,6 +158,7 @@ class _RootTabShellState extends State<RootTabShell> {
   @override
   void dispose() {
     _routingState.removeListener(_onRoutingChanged);
+    _userDataStore.removeListener(_checkOnboarding);
     _linkSub?.cancel();
     super.dispose();
   }
