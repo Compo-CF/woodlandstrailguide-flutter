@@ -15,7 +15,10 @@ import '../stores/trail_store.dart';
 import '../theme/natural_palette.dart';
 import '../widgets/loop_builder_sheet.dart';
 import '../widgets/navigation_banner.dart';
+import '../widgets/poi_detail_sheet.dart';
 import '../widgets/route_summary_card.dart';
+import '../widgets/search_sheet.dart';
+import '../widgets/trail_detail_sheet.dart';
 
 /// Map tab. Renders every Way as a Google Maps polyline, plus POI
 /// markers filtered by zoom level, plus (when routing) the computed
@@ -52,6 +55,11 @@ class _MapScreenState extends State<MapScreen> {
   DateTime? _offRouteSince;
   bool _showingRerouteToast = false;
   StreamSubscription<Position>? _positionSub;
+
+  /// Best-effort last-known position, used only to show "X mi from you"
+  /// in the POI detail sheet. Not authoritative for navigation math —
+  /// that always reads a fresh Geolocator fix.
+  Position? _lastKnownPosition;
 
   static const _tierAlways = <String>{
     'parking_park',
@@ -158,6 +166,11 @@ class _MapScreenState extends State<MapScreen> {
                       _floatingButton(
                         icon: Icons.my_location,
                         onTap: _centerOnUser,
+                      ),
+                      const SizedBox(height: 10),
+                      _floatingButton(
+                        icon: Icons.search,
+                        onTap: () => _openSearch(graph, poiStore, routing),
                       ),
                       if (routing.routingMode) ...[
                         const SizedBox(height: 10),
@@ -274,6 +287,7 @@ class _MapScreenState extends State<MapScreen> {
 
   void _onPositionUpdate(Position pos) {
     if (!mounted) return;
+    _lastKnownPosition = pos;
     final routing = context.read<RoutingState>();
     final graph = context.read<TrailStore>().graph;
     if (graph == null || routing.route == null || !routing.navigationActive) return;
@@ -336,6 +350,61 @@ class _MapScreenState extends State<MapScreen> {
       routing.setEnd(node, graph);
     }
     // Both already set — ignore further taps until the user clears.
+  }
+
+  /// Opens the full POI detail sheet. "Route here" snaps the POI's
+  /// coordinates to the nearest graph node, enters routing mode, and
+  /// sets it as the start point — mirrors iOS POIDetailSheet's
+  /// onRouteHere wiring.
+  void _showPOIDetail(
+      POI poi, POICategory category, TrailGraph graph, RoutingState routing) {
+    POIDetailSheet.show(
+      context,
+      poi: poi,
+      category: category,
+      userLocation: _lastKnownPosition,
+      onRouteHere: () {
+        final router = TrailRouter(graph);
+        final node = router.nearestNode(poi.lat, poi.lon);
+        if (node == null) return;
+        if (!routing.routingMode) routing.enterRoutingMode();
+        routing.setStart(node, graph);
+      },
+    );
+  }
+
+  /// Opens the search sheet. Trail results open TrailDetailSheet
+  /// directly; POI results open the full POIDetailSheet with "Route
+  /// here" wired the same way as a map tap. Either way the camera also
+  /// pans to the result.
+  Future<void> _openSearch(
+      TrailGraph graph, POIStore poiStore, RoutingState routing) async {
+    Position? pos;
+    if (_hasLocationPermission) {
+      try {
+        pos = await Geolocator.getCurrentPosition(
+            desiredAccuracy: LocationAccuracy.high);
+        _lastKnownPosition = pos;
+      } catch (_) {}
+    }
+    if (!mounted) return;
+    await SearchSheet.show(
+      context,
+      graph: graph,
+      categories: poiStore.categories,
+      userLocation: pos,
+      onSelect: (result) async {
+        await _controller?.animateCamera(
+          CameraUpdate.newLatLngZoom(LatLng(result.lat, result.lon), 17),
+        );
+        if (!mounted) return;
+        if (result.poi != null && result.category != null) {
+          _showPOIDetail(result.poi!, result.category!, graph, routing);
+        } else if (result.way != null) {
+          TrailDetailSheet.show(context, result.way!);
+        }
+      },
+    );
   }
 
   Future<void> _useCurrentLocationAsStart(
@@ -427,6 +496,12 @@ class _MapScreenState extends State<MapScreen> {
 
   Set<Polyline> _buildPolylines(TrailGraph graph, RoutingState routing) {
     final polys = <Polyline>{};
+    // Trails are only tappable-for-detail when NOT actively routing —
+    // in routing mode a tap on a trail should register as a start/end/
+    // waypoint point instead of popping the detail sheet, so we leave
+    // consumeTapEvents off and let the tap fall through to the map's
+    // onTap handler.
+    final tappable = !routing.routingMode;
     for (var i = 0; i < graph.ways.length; i++) {
       final w = graph.ways[i];
       final coords = w.nodeIndices
@@ -444,6 +519,8 @@ class _MapScreenState extends State<MapScreen> {
         width: isTrail ? 3 : 4,
         geodesic: false,
         zIndex: 0,
+        consumeTapEvents: tappable,
+        onTap: tappable ? () => TrailDetailSheet.show(context, w) : null,
       ));
     }
 
@@ -479,12 +556,7 @@ class _MapScreenState extends State<MapScreen> {
           markerId: MarkerId('${cat.key}__${poi.id}'),
           position: LatLng(poi.lat, poi.lon),
           icon: icon,
-          infoWindow: InfoWindow(
-            title: poi.name ?? cat.label,
-            snippet: [cat.label, poi.park, poi.village]
-                .whereType<String>()
-                .join(' · '),
-          ),
+          onTap: () => _showPOIDetail(poi, cat, graph, routing),
         ));
       }
     }
@@ -555,6 +627,7 @@ class _MapScreenState extends State<MapScreen> {
     try {
       final pos = await Geolocator.getCurrentPosition(
           desiredAccuracy: LocationAccuracy.high);
+      _lastKnownPosition = pos;
       await _controller?.animateCamera(
         CameraUpdate.newLatLngZoom(LatLng(pos.latitude, pos.longitude), 16),
       );
