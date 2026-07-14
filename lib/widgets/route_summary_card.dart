@@ -245,6 +245,13 @@ class RoutingHintCard extends StatelessWidget {
               ),
             ),
           ],
+          if (waypointCount > 0) ...[
+            const SizedBox(height: 8),
+            Text(
+              '$waypointCount waypoint${waypointCount == 1 ? '' : 's'} added',
+              style: const TextStyle(fontSize: 12, color: Color(0xFF8A6A3D)),
+            ),
+          ],
         ],
       ),
     );

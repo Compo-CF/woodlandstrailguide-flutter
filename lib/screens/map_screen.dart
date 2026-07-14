@@ -13,6 +13,7 @@ import '../state/routing_state.dart';
 import '../stores/poi_store.dart';
 import '../stores/trail_store.dart';
 import '../theme/natural_palette.dart';
+import '../widgets/loop_builder_sheet.dart';
 import '../widgets/navigation_banner.dart';
 import '../widgets/route_summary_card.dart';
 
@@ -158,6 +159,13 @@ class _MapScreenState extends State<MapScreen> {
                         icon: Icons.my_location,
                         onTap: _centerOnUser,
                       ),
+                      if (routing.routingMode) ...[
+                        const SizedBox(height: 10),
+                        _floatingButton(
+                          icon: Icons.all_inclusive,
+                          onTap: () => _openLoopBuilder(graph, routing),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -167,7 +175,8 @@ class _MapScreenState extends State<MapScreen> {
                     left: 20,
                     child: _zoomHintPill(),
                   ),
-                if (routing.routingMode && routing.route == null)
+                if (routing.routingMode &&
+                    (routing.route == null || routing.addingWaypoint))
                   Positioned(
                     left: 0,
                     right: 0,
@@ -182,7 +191,9 @@ class _MapScreenState extends State<MapScreen> {
                           : null,
                     ),
                   ),
-                if (routing.route != null && !routing.navigationActive)
+                if (routing.route != null &&
+                    !routing.navigationActive &&
+                    !routing.addingWaypoint)
                   Positioned(
                     left: 0,
                     right: 0,
@@ -340,6 +351,29 @@ class _MapScreenState extends State<MapScreen> {
       final node = router.nearestNode(pos.latitude, pos.longitude);
       if (node != null) routing.setStart(node, graph);
     } catch (_) {}
+  }
+
+  /// Opens the loop-distance picker, then resolves the user's nearest
+  /// node as the loop's start and Router.farthestNode(atRouteDistance:
+  /// miles/2) as the turnaround point, mirroring iOS LoopBuilderSheet.
+  Future<void> _openLoopBuilder(TrailGraph graph, RoutingState routing) async {
+    if (!_hasLocationPermission) {
+      await _initLocation();
+      if (!_hasLocationPermission) return;
+    }
+    if (!mounted) return;
+    await LoopBuilderSheet.show(context, onGenerate: (miles) async {
+      try {
+        final pos = await Geolocator.getCurrentPosition(
+            desiredAccuracy: LocationAccuracy.high);
+        final router = TrailRouter(graph);
+        final start = router.nearestNode(pos.latitude, pos.longitude);
+        if (start == null) return;
+        final far = router.farthestNode(start, miles * 1609.344 / 2);
+        if (far == null) return;
+        routing.applyStops([start, far, start], graph);
+      } catch (_) {}
+    });
   }
 
   Future<void> _onCameraIdle() async {
