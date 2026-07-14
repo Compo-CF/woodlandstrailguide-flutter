@@ -13,6 +13,7 @@ import '../state/routing_state.dart';
 import '../stores/poi_store.dart';
 import '../stores/trail_store.dart';
 import '../stores/user_data_store.dart';
+import '../stores/weather_store.dart';
 import '../theme/natural_palette.dart';
 import '../widgets/loop_builder_sheet.dart';
 import '../widgets/navigation_banner.dart';
@@ -20,6 +21,7 @@ import '../widgets/poi_detail_sheet.dart';
 import '../widgets/route_summary_card.dart';
 import '../widgets/search_sheet.dart';
 import '../widgets/trail_detail_sheet.dart';
+import '../widgets/weather_pill.dart';
 
 /// Map tab. Renders every Way as a Google Maps polyline, plus POI
 /// markers filtered by zoom level, plus (when routing) the computed
@@ -113,10 +115,36 @@ class _MapScreenState extends State<MapScreen> {
       perm = await Geolocator.requestPermission();
     }
     if (!mounted) return;
-    setState(() {
-      _hasLocationPermission = perm == LocationPermission.always ||
-          perm == LocationPermission.whileInUse;
-    });
+    final granted = perm == LocationPermission.always ||
+        perm == LocationPermission.whileInUse;
+    setState(() => _hasLocationPermission = granted);
+
+    // Refine the weather snapshot with the user's real position once we
+    // have one — WeatherStore falls back to The Woodlands centroid
+    // until then, which is fine but not precise.
+    if (granted) {
+      try {
+        final pos = await Geolocator.getCurrentPosition(
+            desiredAccuracy: LocationAccuracy.reduced);
+        if (!mounted) return;
+        context
+            .read<WeatherStore>()
+            .refresh(latitude: pos.latitude, longitude: pos.longitude);
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _openWeatherDetail(WeatherStore weatherStore) {
+    return WeatherDetailSheet.show(
+      context,
+      snapshot: weatherStore.snapshot,
+      lastFetch: weatherStore.lastFetch,
+      onRefresh: () => weatherStore.refresh(
+        latitude: _lastKnownPosition?.latitude,
+        longitude: _lastKnownPosition?.longitude,
+        force: true,
+      ),
+    );
   }
 
   @override
@@ -124,6 +152,7 @@ class _MapScreenState extends State<MapScreen> {
     final trailStore = context.watch<TrailStore>();
     final poiStore = context.watch<POIStore>();
     final routing = context.watch<RoutingState>();
+    final weatherStore = context.watch<WeatherStore>();
     final graph = trailStore.graph;
 
     return Scaffold(
@@ -146,6 +175,14 @@ class _MapScreenState extends State<MapScreen> {
                   myLocationButtonEnabled: false,
                   zoomControlsEnabled: false,
                   compassEnabled: true,
+                ),
+                Positioned(
+                  top: 48,
+                  left: 12,
+                  child: WeatherPill(
+                    snapshot: weatherStore.snapshot,
+                    onTap: () => _openWeatherDetail(weatherStore),
+                  ),
                 ),
                 Positioned(
                   top: 48,

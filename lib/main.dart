@@ -12,6 +12,7 @@ import 'stores/trail_store.dart';
 import 'stores/poi_store.dart';
 import 'stores/featured_walk_store.dart';
 import 'stores/user_data_store.dart';
+import 'stores/weather_store.dart';
 import 'state/routing_state.dart';
 import 'screens/map_screen.dart';
 import 'screens/list_screen.dart';
@@ -45,6 +46,7 @@ class WoodlandsTrailGuideApp extends StatelessWidget {
           return store;
         }),
         ChangeNotifierProvider(create: (_) => RoutingState()),
+        ChangeNotifierProvider(create: (_) => WeatherStore()..refresh()),
       ],
       child: MaterialApp(
         title: 'Woodlands Trail Guide',
