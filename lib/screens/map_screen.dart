@@ -5,19 +5,25 @@ import 'package:provider/provider.dart';
 
 import '../models/poi.dart';
 import '../models/trail_graph.dart';
+import '../services/router.dart';
+import '../state/routing_state.dart';
 import '../stores/poi_store.dart';
 import '../stores/trail_store.dart';
 import '../theme/natural_palette.dart';
+import '../widgets/route_summary_card.dart';
 
 /// Map tab. Renders every Way as a Google Maps polyline, plus POI
-/// markers filtered by zoom level so the map isn't buried in pins at
-/// low zoom.
+/// markers filtered by zoom level, plus (when routing) the computed
+/// route highlighted on top with start/end/waypoint pins.
 ///
 ///   zoom < 13   → parking, playgrounds, restrooms
 ///   zoom 13-15  → + pavilions, water fountains, sports fields, picnic areas
 ///   zoom ≥ 15   → + bridges, art benches, trolley stops
 class MapScreen extends StatefulWidget {
-  const MapScreen({super.key});
+  /// Bumped by ContentView's Route tab shortcut. Entering routing mode
+  /// on change is handled in didUpdateWidget.
+  final int routeIntent;
+  const MapScreen({super.key, this.routeIntent = 0});
 
   @override
   State<MapScreen> createState() => _MapScreenState();
@@ -28,15 +34,10 @@ class _MapScreenState extends State<MapScreen> {
   MapType _mapType = MapType.normal;
   bool _hasLocationPermission = false;
 
-  /// Current zoom band index — 0 (city), 1 (village), 2 (street). We
-  /// only rebuild markers when the band changes, not on every micro-
-  /// movement of the camera, so panning stays smooth.
   int _zoomBand = 0;
-
   static const _cityZoomThreshold = 13.0;
   static const _streetZoomThreshold = 15.0;
 
-  /// Category priority tiers.
   static const _tierAlways = <String>{
     'parking_park',
     'parking_lots',
@@ -61,6 +62,15 @@ class _MapScreenState extends State<MapScreen> {
     _initLocation();
   }
 
+  @override
+  void didUpdateWidget(covariant MapScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.routeIntent != oldWidget.routeIntent) {
+      final routing = context.read<RoutingState>();
+      if (!routing.routingMode) routing.enterRoutingMode();
+    }
+  }
+
   Future<void> _initLocation() async {
     var perm = await Geolocator.checkPermission();
     if (perm == LocationPermission.denied) {
@@ -77,6 +87,7 @@ class _MapScreenState extends State<MapScreen> {
   Widget build(BuildContext context) {
     final trailStore = context.watch<TrailStore>();
     final poiStore = context.watch<POIStore>();
+    final routing = context.watch<RoutingState>();
     final graph = trailStore.graph;
 
     return Scaffold(
@@ -90,10 +101,11 @@ class _MapScreenState extends State<MapScreen> {
                     zoom: 12,
                   ),
                   mapType: _mapType,
-                  polylines: _buildPolylines(graph),
-                  markers: _buildMarkers(poiStore.categories),
+                  polylines: _buildPolylines(graph, routing),
+                  markers: _buildMarkers(poiStore.categories, graph, routing),
                   onMapCreated: (c) => _controller = c,
                   onCameraIdle: _onCameraIdle,
+                  onTap: (pos) => _onMapTap(pos, graph, routing),
                   myLocationEnabled: _hasLocationPermission,
                   myLocationButtonEnabled: false,
                   zoomControlsEnabled: false,
@@ -104,6 +116,14 @@ class _MapScreenState extends State<MapScreen> {
                   right: 12,
                   child: Column(
                     children: [
+                      _floatingButton(
+                        icon: routing.routingMode
+                            ? Icons.close
+                            : Icons.directions_walk,
+                        selected: routing.routingMode,
+                        onTap: () => _toggleRouting(routing),
+                      ),
+                      const SizedBox(height: 10),
                       _floatingButton(
                         icon: switch (_mapType) {
                           MapType.normal => Icons.map_outlined,
@@ -120,11 +140,46 @@ class _MapScreenState extends State<MapScreen> {
                     ],
                   ),
                 ),
-                Positioned(
-                  bottom: 20,
-                  left: 20,
-                  child: _zoomHintPill(),
-                ),
+                if (!routing.routingMode)
+                  Positioned(
+                    bottom: 20,
+                    left: 20,
+                    child: _zoomHintPill(),
+                  ),
+                if (routing.routingMode && routing.route == null)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 24,
+                    child: RoutingHintCard(
+                      startNode: routing.startNode,
+                      endNode: routing.endNode,
+                      addingWaypoint: routing.addingWaypoint,
+                      waypointCount: routing.waypointNodes.length,
+                      onUseCurrentLocation: routing.startNode == null
+                          ? () => _useCurrentLocationAsStart(graph, routing)
+                          : null,
+                    ),
+                  ),
+                if (routing.route != null && !routing.navigationActive)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: RouteSummaryCard(
+                      route: routing.route!,
+                      onStartWalking: () => routing.startNavigation(),
+                      onClear: () => routing.clearRoute(),
+                      onAddWaypoint: () => routing.toggleWaypointMode(),
+                    ),
+                  ),
+                if (routing.navigationActive)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: _navigatingBar(routing),
+                  ),
               ],
             ),
     );
@@ -150,9 +205,80 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
-  /// Camera stopped moving — recompute what zoom band we're in and
-  /// rebuild markers if it changed. Panning within a band doesn't
-  /// trigger a rebuild.
+  /// Temporary compact nav bar shown while navigationActive. Full
+  /// turn-by-turn instruction banner + off-route reroute lands in the
+  /// next batch; this keeps "Start walking" functional in the
+  /// meantime (remaining distance + End button).
+  Widget _navigatingBar(RoutingState routing) {
+    final remaining = routing.route!.lengthMeters;
+    final miles = remaining / 1609.344;
+    return Container(
+      color: NaturalPalette.route,
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+      child: SafeArea(
+        top: false,
+        child: Row(
+          children: [
+            const Icon(Icons.navigation, color: Colors.white),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Navigating — ${miles.toStringAsFixed(2)} mi total',
+                style: const TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.w600),
+              ),
+            ),
+            TextButton(
+              onPressed: () => routing.endNavigation(),
+              style: TextButton.styleFrom(foregroundColor: Colors.white),
+              child: const Text('End'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _toggleRouting(RoutingState routing) {
+    if (routing.routingMode) {
+      routing.clearRoute();
+    } else {
+      routing.enterRoutingMode();
+    }
+  }
+
+  void _onMapTap(LatLng pos, TrailGraph graph, RoutingState routing) {
+    if (!routing.routingMode) return;
+    final router = TrailRouter(graph);
+    final node = router.nearestNode(pos.latitude, pos.longitude);
+    if (node == null) return;
+
+    if (routing.addingWaypoint) {
+      routing.addWaypoint(node, graph);
+      routing.toggleWaypointMode();
+    } else if (routing.startNode == null) {
+      routing.setStart(node, graph);
+    } else if (routing.endNode == null) {
+      routing.setEnd(node, graph);
+    }
+    // Both already set — ignore further taps until the user clears.
+  }
+
+  Future<void> _useCurrentLocationAsStart(
+      TrailGraph graph, RoutingState routing) async {
+    if (!_hasLocationPermission) {
+      await _initLocation();
+      if (!_hasLocationPermission) return;
+    }
+    try {
+      final pos = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.high);
+      final router = TrailRouter(graph);
+      final node = router.nearestNode(pos.latitude, pos.longitude);
+      if (node != null) routing.setStart(node, graph);
+    } catch (_) {}
+  }
+
   Future<void> _onCameraIdle() async {
     if (_controller == null) return;
     try {
@@ -161,9 +287,7 @@ class _MapScreenState extends State<MapScreen> {
       if (newBand != _zoomBand && mounted) {
         setState(() => _zoomBand = newBand);
       }
-    } catch (_) {
-      // getZoomLevel can fail during controller disposal — ignore.
-    }
+    } catch (_) {}
   }
 
   int _bandFor(double zoom) {
@@ -176,12 +300,9 @@ class _MapScreenState extends State<MapScreen> {
     if (_tierAlways.contains(key)) return true;
     if (_tierMid.contains(key)) return _zoomBand >= 1;
     if (_tierDetail.contains(key)) return _zoomBand >= 2;
-    return false; // categories not listed are never shown on the map
+    return false;
   }
 
-  /// Optional hint pill in the bottom-left that tells users to zoom in
-  /// for more detail at low zoom. Disappears once they zoom past the
-  /// street threshold.
   Widget _zoomHintPill() {
     if (_zoomBand >= 2) return const SizedBox.shrink();
     final text = _zoomBand == 0
@@ -199,19 +320,15 @@ class _MapScreenState extends State<MapScreen> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.zoom_in,
-              size: 16, color: NaturalPalette.forest),
+          const Icon(Icons.zoom_in, size: 16, color: NaturalPalette.forest),
           const SizedBox(width: 6),
-          Text(text,
-              style: const TextStyle(
-                  color: NaturalPalette.ink, fontSize: 12)),
+          Text(text, style: const TextStyle(color: NaturalPalette.ink, fontSize: 12)),
         ],
       ),
     );
   }
 
-  /// Convert every Way into a Google Maps Polyline. Colors mirror iOS.
-  Set<Polyline> _buildPolylines(TrailGraph graph) {
+  Set<Polyline> _buildPolylines(TrailGraph graph, RoutingState routing) {
     final polys = <Polyline>{};
     for (var i = 0; i < graph.ways.length; i++) {
       final w = graph.ways[i];
@@ -226,17 +343,35 @@ class _MapScreenState extends State<MapScreen> {
       polys.add(Polyline(
         polylineId: PolylineId('way_$i'),
         points: coords,
-        color: isTrail
-            ? const Color(0xFF6B4A2B)
-            : NaturalPalette.forest,
+        color: isTrail ? const Color(0xFF6B4A2B) : NaturalPalette.forest,
         width: isTrail ? 3 : 4,
         geodesic: false,
+        zIndex: 0,
       ));
+    }
+
+    if (routing.route != null) {
+      final coords = routing.route!.nodes
+          .where((idx) => idx >= 0 && idx < graph.nodes.length)
+          .map((idx) => graph.nodes[idx])
+          .map((c) => LatLng(c.lat, c.lon))
+          .toList();
+      if (coords.length >= 2) {
+        polys.add(Polyline(
+          polylineId: const PolylineId('active_route'),
+          points: coords,
+          color: NaturalPalette.route,
+          width: 6,
+          geodesic: false,
+          zIndex: 10,
+        ));
+      }
     }
     return polys;
   }
 
-  Set<Marker> _buildMarkers(List<POICategory> categories) {
+  Set<Marker> _buildMarkers(
+      List<POICategory> categories, TrailGraph graph, RoutingState routing) {
     final markers = <Marker>{};
     for (final cat in categories) {
       if (!_isCategoryVisible(cat.key)) continue;
@@ -255,6 +390,37 @@ class _MapScreenState extends State<MapScreen> {
           ),
         ));
       }
+    }
+
+    if (routing.startNode != null) {
+      final c = graph.nodes[routing.startNode!];
+      markers.add(Marker(
+        markerId: const MarkerId('route_start'),
+        position: LatLng(c.lat, c.lon),
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
+        infoWindow: const InfoWindow(title: 'Start'),
+        zIndex: 20,
+      ));
+    }
+    for (var i = 0; i < routing.waypointNodes.length; i++) {
+      final c = graph.nodes[routing.waypointNodes[i]];
+      markers.add(Marker(
+        markerId: MarkerId('route_waypoint_$i'),
+        position: LatLng(c.lat, c.lon),
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueYellow),
+        infoWindow: InfoWindow(title: 'Waypoint ${i + 1}'),
+        zIndex: 20,
+      ));
+    }
+    if (routing.endNode != null) {
+      final c = graph.nodes[routing.endNode!];
+      markers.add(Marker(
+        markerId: const MarkerId('route_end'),
+        position: LatLng(c.lat, c.lon),
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange),
+        infoWindow: const InfoWindow(title: 'Destination'),
+        zIndex: 20,
+      ));
     }
     return markers;
   }
@@ -308,9 +474,10 @@ class _MapScreenState extends State<MapScreen> {
     });
   }
 
-  Widget _floatingButton({required IconData icon, required VoidCallback onTap}) {
+  Widget _floatingButton(
+      {required IconData icon, required VoidCallback onTap, bool selected = false}) {
     return Material(
-      color: NaturalPalette.buttonBg,
+      color: selected ? NaturalPalette.route : NaturalPalette.buttonBg,
       shape: const CircleBorder(),
       elevation: 3,
       child: InkWell(
@@ -319,7 +486,8 @@ class _MapScreenState extends State<MapScreen> {
         child: SizedBox(
           width: 44,
           height: 44,
-          child: Icon(icon, size: 20, color: NaturalPalette.forest),
+          child: Icon(icon, size: 20,
+              color: selected ? Colors.white : NaturalPalette.forest),
         ),
       ),
     );

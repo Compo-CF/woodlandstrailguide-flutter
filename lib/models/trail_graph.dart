@@ -1,8 +1,9 @@
 // TrailGraph — parses the compact JSON format produced by
 // scripts/fetch_township_data.py in the iOS repo. Nodes are `[lat, lon]`
 // pairs (index = canonical node id), ways use short keys (`n`, `len_m`).
-// Adjacency data is present in the JSON but not parsed here — we don't
-// need it for v0.1 (routing arrives in a later phase).
+// `adj[nodeIndex]` is a precomputed adjacency list: each entry is
+// `[neighborIndex, lengthMeters, wayIndex]`, used directly by Router's
+// Dijkstra so we don't have to rebuild adjacency at runtime.
 
 class TrailGraph {
   final int version;
@@ -10,6 +11,7 @@ class TrailGraph {
   final BBox bbox;
   final List<Coord> nodes;
   final List<Way> ways;
+  final List<List<Edge>> adj;
 
   TrailGraph({
     required this.version,
@@ -17,6 +19,7 @@ class TrailGraph {
     required this.bbox,
     required this.nodes,
     required this.ways,
+    required this.adj,
   });
 
   factory TrailGraph.fromJson(Map<String, dynamic> json) => TrailGraph(
@@ -28,6 +31,11 @@ class TrailGraph {
             .toList(),
         ways: (json['ways'] as List<dynamic>)
             .map((w) => Way.fromJson(w as Map<String, dynamic>))
+            .toList(),
+        adj: (json['adj'] as List<dynamic>)
+            .map((edges) => (edges as List<dynamic>)
+                .map((e) => Edge.fromArray(e as List<dynamic>))
+                .toList())
             .toList(),
       );
 }
@@ -61,6 +69,25 @@ class Coord {
   factory Coord.fromArray(List<dynamic> arr) => Coord(
         (arr[0] as num).toDouble(),
         (arr[1] as num).toDouble(),
+      );
+}
+
+/// One adjacency entry: `[neighborNodeIndex, lengthMeters, wayIndex]`.
+class Edge {
+  final int neighbor;
+  final double lengthMeters;
+  final int wayIndex;
+
+  const Edge({
+    required this.neighbor,
+    required this.lengthMeters,
+    required this.wayIndex,
+  });
+
+  factory Edge.fromArray(List<dynamic> arr) => Edge(
+        neighbor: (arr[0] as num).toInt(),
+        lengthMeters: (arr[1] as num).toDouble(),
+        wayIndex: (arr[2] as num).toInt(),
       );
 }
 

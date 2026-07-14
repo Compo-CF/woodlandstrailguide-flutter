@@ -1,9 +1,9 @@
 // Woodlands Trail Guide — Android edition.
 //
 // Entry point wires up the shared data stores (TrailStore, POIStore,
-// FeaturedWalkStore) via Provider and lays out the bottom-tab shell
-// (Map / Trails / Featured / About). Individual screens are in
-// `lib/screens/`.
+// FeaturedWalkStore, RoutingState) via Provider and lays out the
+// bottom-tab shell (Map / Trails / Route / Featured / About).
+// Individual screens are in `lib/screens/`.
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -11,6 +11,7 @@ import 'package:provider/provider.dart';
 import 'stores/trail_store.dart';
 import 'stores/poi_store.dart';
 import 'stores/featured_walk_store.dart';
+import 'state/routing_state.dart';
 import 'screens/map_screen.dart';
 import 'screens/list_screen.dart';
 import 'screens/featured_screen.dart';
@@ -34,6 +35,7 @@ class WoodlandsTrailGuideApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => TrailStore()..load()),
         ChangeNotifierProvider(create: (_) => POIStore()..load()),
         ChangeNotifierProvider(create: (_) => FeaturedWalkStore()..load()),
+        ChangeNotifierProvider(create: (_) => RoutingState()),
       ],
       child: MaterialApp(
         title: 'Woodlands Trail Guide',
@@ -49,7 +51,11 @@ class WoodlandsTrailGuideApp extends StatelessWidget {
   }
 }
 
-/// Bottom tab bar with 4 tabs: Map / Trails / Featured / About.
+/// Bottom tab bar: Map / Trails / Route / Featured / About. The Route
+/// tab is a shortcut, not a destination — selecting it flips back to
+/// Map and bumps `_routeIntent`, which MapScreen watches (via
+/// didUpdateWidget) to enter routing mode immediately. Mirrors the
+/// iOS ContentView.AppTab.route pattern.
 class RootTabShell extends StatefulWidget {
   const RootTabShell({super.key});
 
@@ -59,21 +65,33 @@ class RootTabShell extends StatefulWidget {
 
 class _RootTabShellState extends State<RootTabShell> {
   int _index = 0;
-
-  static const _tabs = <Widget>[
-    MapScreen(),
-    ListScreen(),
-    FeaturedScreen(),
-    AboutScreen(),
-  ];
+  int _routeIntent = 0;
+  static const _routeTabIndex = 2;
 
   @override
   Widget build(BuildContext context) {
+    final tabs = <Widget>[
+      MapScreen(routeIntent: _routeIntent),
+      const ListScreen(),
+      const SizedBox.shrink(), // Route tab placeholder — never actually shown
+      const FeaturedScreen(),
+      const AboutScreen(),
+    ];
+
     return Scaffold(
-      body: IndexedStack(index: _index, children: _tabs),
+      body: IndexedStack(index: _index, children: tabs),
       bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: (i) => setState(() => _index = i),
+        selectedIndex: _index == _routeTabIndex ? 0 : _index,
+        onDestinationSelected: (i) {
+          if (i == _routeTabIndex) {
+            setState(() {
+              _index = 0;
+              _routeIntent++;
+            });
+            return;
+          }
+          setState(() => _index = i);
+        },
         destinations: const [
           NavigationDestination(
               icon: Icon(Icons.map_outlined),
@@ -83,6 +101,10 @@ class _RootTabShellState extends State<RootTabShell> {
               icon: Icon(Icons.list_alt_outlined),
               selectedIcon: Icon(Icons.list_alt),
               label: 'Trails'),
+          NavigationDestination(
+              icon: Icon(Icons.directions_walk_outlined),
+              selectedIcon: Icon(Icons.directions_walk),
+              label: 'Route'),
           NavigationDestination(
               icon: Icon(Icons.star_outline),
               selectedIcon: Icon(Icons.star),
