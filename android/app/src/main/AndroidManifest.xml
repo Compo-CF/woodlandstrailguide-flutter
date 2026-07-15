@@ -1,4 +1,5 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <!-- Required for network fetches (GitHub Pages JSON refresh) and Google Maps. -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <!-- Location — used to show the user's position on the trails and follow the route. -->
@@ -66,6 +67,28 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- Disable WorkManager's default auto-initialization. We don't use
+             WorkManager directly anywhere in this app — it's only pulled in
+             transitively (by google_mobile_ads and/or geolocator_android).
+             google_mobile_ads' own internal startup code piggybacks on the
+             shared androidx.startup.InitializationProvider to build
+             WorkManager's Room database on app launch, and that build was
+             crashing at startup (FATAL EXCEPTION: main ->
+             "Failed to create an instance of androidx.work.impl.WorkDatabase").
+             Removing WorkManagerInitializer from the shared provider stops
+             that code path from running at all — safe here since nothing in
+             this app relies on WorkManager's persisted background jobs. -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                android:value="androidx.startup"
+                tools:node="remove" />
+        </provider>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and
