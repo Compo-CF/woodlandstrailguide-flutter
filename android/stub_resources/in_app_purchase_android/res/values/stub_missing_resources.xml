@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Stub definitions for resources that in_app_purchase_android's own bundled
+  AAR references internally but that no current Google Play Services /
+  AndroidX Core release actually ships.
+
+  This is injected as an extra res source directory into the
+  :in_app_purchase_android subproject itself (see the root build.gradle.kts
+  subprojects block) rather than living in :app's res folder. The failing
+  task is :in_app_purchase_android:verifyReleaseResources, which is that
+  library module verifying ITS OWN resources resolve using only its own
+  resource set + its own dependencies — it never sees anything under
+  android/app/src/main/res, since the app depends on the library, not the
+  other way around. A copy of this same stub also lives in :app's res
+  (kept for the final app-level link pass); this copy is what lets the
+  library module itself build in the first place.
+
+  Root cause: the plugin's AAR includes a vestigial "Sign in with
+  Google" button resource file (common_google_signin_btn_text_dark.xml
+  / common_google_signin_btn_text_light.xml) and a notification-action
+  compat layout, neither of which this app ever inflates — we don't use
+  Google Sign-In anywhere, and we don't post notifications with action
+  buttons. Confirmed on 2026-07-15 that in_app_purchase_android 0.5.1
+  (latest on pub.dev) still ships these files, so this isn't fixable by
+  upgrading the package.
+
+  These are placeholder values that only need to exist, not look like
+  anything. Safe to delete if a future in_app_purchase_android release
+  drops the offending bundled files (check the plugin's CHANGELOG).
+-->
+<resources>
+    <!-- Referenced by common_google_signin_btn_text_dark.xml -->
+    <color name="common_google_signin_btn_text_dark_disabled">#1F1F1F</color>
+    <color name="common_google_signin_btn_text_dark_pressed">#1F1F1F</color>
+    <color name="common_google_signin_btn_text_dark_focused">#1F1F1F</color>
+    <color name="common_google_signin_btn_text_dark_default">#1F1F1F</color>
+
+    <!-- Referenced by common_google_signin_btn_text_light.xml -->
+    <color name="common_google_signin_btn_text_light_disabled">#FFFFFF</color>
+    <color name="common_google_signin_btn_text_light_pressed">#FFFFFF</color>
+    <color name="common_google_signin_btn_text_light_focused">#FFFFFF</color>
+    <color name="common_google_signin_btn_text_light_default">#FFFFFF</color>
+
+    <!-- Referenced by notification_action_background.xml (drawable-v21) -->
+    <color name="androidx_core_ripple_material_light">#1F000000</color>
+    <color name="notification_icon_bg_color">#FF757575</color>
+    <dimen name="compat_button_inset_horizontal_material">4dp</dimen>
+    <dimen name="compat_button_inset_vertical_material">6dp</dimen>
+    <dimen name="compat_control_corner_material">2dp</dimen>
+    <dimen name="compat_button_padding_horizontal_material">8dp</dimen>
+    <dimen name="compat_button_padding_vertical_material">4dp</dimen>
+
+    <!-- Referenced by layout-v21/notification_action.xml.
+         parent="" is required — without it, AAPT infers a parent from
+         the dotted name (tries to resolve style/Widget.Compat, which
+         doesn't exist either, and fails the same way). -->
+    <style name="Widget.Compat.NotificationActionContainer" parent="" />
+</resources>
