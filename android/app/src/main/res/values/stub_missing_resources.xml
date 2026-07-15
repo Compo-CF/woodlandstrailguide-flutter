@@ -40,6 +40,9 @@
     <dimen name="compat_button_padding_horizontal_material">8dp</dimen>
     <dimen name="compat_button_padding_vertical_material">4dp</dimen>
 
-    <!-- Referenced by layout-v21/notification_action.xml -->
-    <style name="Widget.Compat.NotificationActionContainer" />
+    <!-- Referenced by layout-v21/notification_action.xml.
+         parent="" is required — without it, AAPT infers a parent from
+         the dotted name (tries to resolve style/Widget.Compat, which
+         doesn't exist either, and fails the same way). -->
+    <style name="Widget.Compat.NotificationActionContainer" parent="" />
 </resources>
