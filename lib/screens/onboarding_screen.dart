@@ -122,6 +122,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     final userData = context.read<UserDataStore>();
     userData.setHasSeenOnboarding(true);
     userData.setHasSeenRoutingIntro(true);
+    Navigator.of(context).pop();
   }
 }
 
