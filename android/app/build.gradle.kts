@@ -68,3 +68,19 @@ kotlin {
 flutter {
     source = "../.."
 }
+
+// in_app_purchase_android bundles a legacy "Sign in with Google" button
+// resource file (common_google_signin_btn_text_dark/light.xml) that
+// references color resources Google removed from newer
+// play-services-base/basement releases. Bumping google_mobile_ads to
+// 9.0.0 pulled in a newer, incompatible version of those libraries via
+// a different transitive path, so AAPT2 fails to link — "resource
+// color/common_google_signin_btn_text_dark_disabled ... not found".
+// Forcing both to a version that still ships those resources resolves
+// the conflict for every module in the dependency graph at once.
+configurations.all {
+    resolutionStrategy {
+        force("com.google.android.gms:play-services-base:18.3.0")
+        force("com.google.android.gms:play-services-basement:18.3.0")
+    }
+}
