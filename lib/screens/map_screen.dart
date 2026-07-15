@@ -202,8 +202,14 @@ class _MapScreenState extends State<MapScreen> {
                     zoom: 12,
                   ),
                   mapType: _mapType,
-                  polylines: _buildPolylines(graph, routing),
-                  markers: _buildMarkers(poiStore.categories, graph, routing),
+                  polylines: {
+                    ..._wayPolylines(graph, routing),
+                    ..._routePolyline(graph, routing),
+                  },
+                  markers: {
+                    ..._poiMarkers(poiStore.categories, graph, routing),
+                    ..._routingMarkers(graph, routing),
+                  },
                   onMapCreated: (c) => _controller = c,
                   onCameraIdle: _onCameraIdle,
                   onTap: (pos) => _onMapTap(pos, graph, routing),
@@ -635,14 +641,36 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
-  Set<Polyline> _buildPolylines(TrailGraph graph, RoutingState routing) {
-    final polys = <Polyline>{};
+  // The trail network is ~1,500 ways and the POI catalog is ~3,400
+  // points — rebuilding both Sets from scratch is expensive (Dart
+  // allocation + full platform-channel re-serialization to the native
+  // Google Maps SDK on every rebuild). Both used to be plain build()
+  // helpers, which meant every RoutingState.notifyListeners() — e.g.
+  // one per GPS fix during active navigation, or a single tap to set
+  // the start point — regenerated all of it, causing GC thrashing bad
+  // enough to OOM-crash on lower-RAM devices. They're cached here and
+  // only recomputed when the inputs that actually affect them change;
+  // the small, genuinely-per-build routing overlays (start/end/waypoint
+  // markers, the active route line) stay cheap and are always fresh.
+
+  Set<Polyline>? _cachedWayPolylines;
+  TrailGraph? _cachedWayPolylinesGraph;
+  bool? _cachedWayPolylinesTappable;
+
+  Set<Polyline> _wayPolylines(TrailGraph graph, RoutingState routing) {
     // Trails are only tappable-for-detail when NOT actively routing —
     // in routing mode a tap on a trail should register as a start/end/
     // waypoint point instead of popping the detail sheet, so we leave
     // consumeTapEvents off and let the tap fall through to the map's
     // onTap handler.
     final tappable = !routing.routingMode;
+    if (_cachedWayPolylines != null &&
+        identical(_cachedWayPolylinesGraph, graph) &&
+        _cachedWayPolylinesTappable == tappable) {
+      return _cachedWayPolylines!;
+    }
+
+    final polys = <Polyline>{};
     for (var i = 0; i < graph.ways.length; i++) {
       final w = graph.ways[i];
       final coords = w.nodeIndices
@@ -665,28 +693,44 @@ class _MapScreenState extends State<MapScreen> {
       ));
     }
 
-    if (routing.route != null) {
-      final coords = routing.route!.nodes
-          .where((idx) => idx >= 0 && idx < graph.nodes.length)
-          .map((idx) => graph.nodes[idx])
-          .map((c) => LatLng(c.lat, c.lon))
-          .toList();
-      if (coords.length >= 2) {
-        polys.add(Polyline(
-          polylineId: const PolylineId('active_route'),
-          points: coords,
-          color: NaturalPalette.route,
-          width: 6,
-          geodesic: false,
-          zIndex: 10,
-        ));
-      }
-    }
+    _cachedWayPolylines = polys;
+    _cachedWayPolylinesGraph = graph;
+    _cachedWayPolylinesTappable = tappable;
     return polys;
   }
 
-  Set<Marker> _buildMarkers(
+  Set<Polyline> _routePolyline(TrailGraph graph, RoutingState routing) {
+    if (routing.route == null) return const {};
+    final coords = routing.route!.nodes
+        .where((idx) => idx >= 0 && idx < graph.nodes.length)
+        .map((idx) => graph.nodes[idx])
+        .map((c) => LatLng(c.lat, c.lon))
+        .toList();
+    if (coords.length < 2) return const {};
+    return {
+      Polyline(
+        polylineId: const PolylineId('active_route'),
+        points: coords,
+        color: NaturalPalette.route,
+        width: 6,
+        geodesic: false,
+        zIndex: 10,
+      ),
+    };
+  }
+
+  Set<Marker>? _cachedPOIMarkers;
+  List<POICategory>? _cachedPOICategories;
+  int? _cachedPOIZoomBand;
+
+  Set<Marker> _poiMarkers(
       List<POICategory> categories, TrailGraph graph, RoutingState routing) {
+    if (_cachedPOIMarkers != null &&
+        identical(_cachedPOICategories, categories) &&
+        _cachedPOIZoomBand == _zoomBand) {
+      return _cachedPOIMarkers!;
+    }
+
     final markers = <Marker>{};
     for (final cat in categories) {
       if (!_isCategoryVisible(cat.key)) continue;
@@ -702,6 +746,14 @@ class _MapScreenState extends State<MapScreen> {
       }
     }
 
+    _cachedPOIMarkers = markers;
+    _cachedPOICategories = categories;
+    _cachedPOIZoomBand = _zoomBand;
+    return markers;
+  }
+
+  Set<Marker> _routingMarkers(TrailGraph graph, RoutingState routing) {
+    final markers = <Marker>{};
     if (routing.startNode != null) {
       final c = graph.nodes[routing.startNode!];
       markers.add(Marker(

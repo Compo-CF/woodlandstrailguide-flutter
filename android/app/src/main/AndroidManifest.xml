@@ -14,7 +14,8 @@
     <application
         android:label="Woodlands Trail Guide"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:largeHeap="true">
 
         <!-- Google Maps API key. Restrict in Google Cloud Console → Credentials →
              this key → Android apps → package name + SHA-1. -->
