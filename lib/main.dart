@@ -34,6 +34,13 @@ void main() {
   // Ads start loading immediately; the AdMobBannerView call sites kick
   // off individual requests when shown.
   MobileAds.instance.initialize();
+  // Cap ad content to a rating suitable for a general-audience hiking app.
+  // Without this, AdMob's default targeting can serve adult/dating/
+  // suggestive creative that has no business next to trail directions —
+  // mirrors the iOS app's requestConfiguration.maxAdContentRating fix.
+  MobileAds.instance.updateRequestConfiguration(
+    RequestConfiguration(maxAdContentRating: MaxAdContentRating.g),
+  );
   runApp(const WoodlandsTrailGuideApp());
 }
 
