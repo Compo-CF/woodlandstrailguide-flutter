@@ -14,16 +14,32 @@
 # impractical. Verification happens by sideloading the built .apk
 # directly onto a real device instead (see README below).
 #
+# 2026-08-13: a brand new Terminal window on this account turned out to
+# be running BASH (see the "-bash" window title / "-bash: command not
+# found" error style), not zsh, despite macOS's own "default shell is
+# now zsh" banner — so PATH lines appended only to ~/.zshrc silently
+# never took effect in a fresh window. Every PATH/env line below now
+# gets written to BOTH ~/.zshrc and ~/.bash_profile so it works
+# whichever shell a given Terminal window actually launches.
+#
 # Usage: bash scripts/macincloud-setup.sh
 
 set -e
+
+# Appends a line to both rc files, once each (idempotent).
+persist_env() {
+  local line="$1"
+  for rc in ~/.zshrc ~/.bash_profile; do
+    grep -qF "$line" "$rc" 2>/dev/null || echo "$line" >> "$rc"
+  done
+}
 
 # --- Flutter SDK (official git-clone method, no Homebrew) ---
 if [ ! -d ~/flutter ]; then
   echo "Cloning Flutter stable..."
   git clone https://github.com/flutter/flutter.git -b stable ~/flutter
 fi
-grep -q 'HOME/flutter/bin' ~/.zshrc 2>/dev/null || echo 'export PATH="$HOME/flutter/bin:$PATH"' >> ~/.zshrc
+persist_env 'export PATH="$HOME/flutter/bin:$PATH"'
 export PATH="$HOME/flutter/bin:$PATH"
 
 # --- Android SDK command-line tools only (no full Android Studio GUI) ---
@@ -43,10 +59,8 @@ if [ ! -d ~/android-sdk/cmdline-tools/latest ]; then
   mv ~/android-sdk/cmdline-tools/cmdline-tools ~/android-sdk/cmdline-tools/latest
 fi
 
-grep -q 'ANDROID_HOME' ~/.zshrc 2>/dev/null || cat >> ~/.zshrc <<'ZRC'
-export ANDROID_HOME="$HOME/android-sdk"
-export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"
-ZRC
+persist_env 'export ANDROID_HOME="$HOME/android-sdk"'
+persist_env 'export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"'
 export ANDROID_HOME="$HOME/android-sdk"
 export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"
 
@@ -63,8 +77,8 @@ if [ -z "$JAVA_MAJOR" ] || [ "$JAVA_MAJOR" -lt 17 ] 2>/dev/null; then
     mkdir -p ~/jdk17
     tar -xzf /tmp/jdk17.tar.gz -C ~/jdk17 --strip-components=1
   fi
-  grep -q 'jdk17/Contents/Home"' ~/.zshrc 2>/dev/null || echo 'export JAVA_HOME="$HOME/jdk17/Contents/Home"' >> ~/.zshrc
-  grep -q 'JAVA_HOME/bin:\$PATH' ~/.zshrc 2>/dev/null || echo 'export PATH="$JAVA_HOME/bin:$PATH"' >> ~/.zshrc
+  persist_env 'export JAVA_HOME="$HOME/jdk17/Contents/Home"'
+  persist_env 'export PATH="$JAVA_HOME/bin:$PATH"'
   export JAVA_HOME="$HOME/jdk17/Contents/Home"
   export PATH="$JAVA_HOME/bin:$PATH"
 fi
@@ -78,6 +92,8 @@ echo "=== flutter doctor ==="
 flutter doctor -v
 
 echo ""
-echo "Setup done. Next time, just: source ~/.zshrc"
-echo "To build a debug APK for sideloading: flutter build apk --debug"
+echo "Setup done. A brand new Terminal window should pick all of this up"
+echo "automatically now (persisted to both ~/.zshrc and ~/.bash_profile)."
+echo "If it somehow doesn't: source ~/.bash_profile (or ~/.zshrc)."
+echo "To build a debug APK for sideloading: flutter build apk --debug --target-platform=android-arm64"
 echo "Output lands at build/app/outputs/flutter-apk/app-debug.apk"
