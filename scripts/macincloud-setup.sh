@@ -31,9 +31,9 @@ mkdir -p ~/android-sdk/cmdline-tools
 if [ ! -d ~/android-sdk/cmdline-tools/latest ]; then
   ARCH=$(uname -m)
   if [ "$ARCH" = "arm64" ]; then
-    URL="https://edgedl.me.gvt1.com/android/studio/ide-zips/commandlinetools-mac_arm64-15859902_latest.zip"
+    URL="https://dl.google.com/android/repository/commandlinetools-mac_arm64-15859902_latest.zip"
   else
-    URL="https://edgedl.me.gvt1.com/android/studio/ide-zips/commandlinetools-mac_x86_64-15859902_latest.zip"
+    URL="https://dl.google.com/android/repository/commandlinetools-mac_x86_64-15859902_latest.zip"
   fi
   echo "Downloading Android command-line tools for $ARCH..."
   curl -L -o /tmp/cmdline-tools.zip "$URL"
