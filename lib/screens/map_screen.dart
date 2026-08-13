@@ -9,6 +9,7 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../models/poi.dart';
 import '../models/trail_graph.dart';
+import '../services/debug_log.dart';
 import '../services/elevation_service.dart';
 import '../services/iap_store.dart';
 import '../services/router.dart';
@@ -161,8 +162,14 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
+  int _buildCount = 0;
+
   @override
   Widget build(BuildContext context) {
+    _buildCount++;
+    unawaited(DebugLog.log('MapScreen.build() call #$_buildCount, '
+        'graph=${context.read<TrailStore>().graph != null}, '
+        'overlaysReady=$_overlaysReady'));
     final trailStore = context.watch<TrailStore>();
     final poiStore = context.watch<POIStore>();
     final routing = context.watch<RoutingState>();
@@ -689,8 +696,13 @@ class _MapScreenState extends State<MapScreen> {
     if (_cachedWayPolylines != null &&
         identical(_cachedWayPolylinesGraph, graph) &&
         _cachedWayPolylinesTappable == tappable) {
+      unawaited(DebugLog.log('_wayPolylines: cache HIT'));
       return _cachedWayPolylines!;
     }
+    unawaited(DebugLog.log(
+        '_wayPolylines: cache MISS (graphChanged=${!identical(_cachedWayPolylinesGraph, graph)}, '
+        'tappableChanged=${_cachedWayPolylinesTappable != tappable}) — rebuilding ${graph.ways.length} ways'));
+    final sw = Stopwatch()..start();
 
     final polys = <Polyline>{};
     for (var i = 0; i < graph.ways.length; i++) {
@@ -718,6 +730,8 @@ class _MapScreenState extends State<MapScreen> {
     _cachedWayPolylines = polys;
     _cachedWayPolylinesGraph = graph;
     _cachedWayPolylinesTappable = tappable;
+    unawaited(DebugLog.log(
+        '_wayPolylines: rebuilt ${polys.length} polylines in ${sw.elapsedMilliseconds}ms'));
     return polys;
   }
 
@@ -750,8 +764,13 @@ class _MapScreenState extends State<MapScreen> {
     if (_cachedPOIMarkers != null &&
         identical(_cachedPOICategories, categories) &&
         _cachedPOIZoomBand == _zoomBand) {
+      unawaited(DebugLog.log('_poiMarkers: cache HIT'));
       return _cachedPOIMarkers!;
     }
+    unawaited(DebugLog.log(
+        '_poiMarkers: cache MISS (categoriesChanged=${!identical(_cachedPOICategories, categories)}, '
+        'zoomBandChanged=${_cachedPOIZoomBand != _zoomBand}) — rebuilding'));
+    final sw = Stopwatch()..start();
 
     final markers = <Marker>{};
     for (final cat in categories) {
@@ -768,6 +787,8 @@ class _MapScreenState extends State<MapScreen> {
       }
     }
 
+    unawaited(DebugLog.log(
+        '_poiMarkers: rebuilt ${markers.length} markers in ${sw.elapsedMilliseconds}ms'));
     _cachedPOIMarkers = markers;
     _cachedPOICategories = categories;
     _cachedPOIZoomBand = _zoomBand;

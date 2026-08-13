@@ -9,6 +9,7 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:http/http.dart' as http;
 
 import '../models/trail_graph.dart';
+import '../services/debug_log.dart';
 
 class TrailStore extends ChangeNotifier {
   static final Uri remoteURL = Uri.parse(
@@ -42,11 +43,16 @@ class TrailStore extends ChangeNotifier {
   }
 
   Future<void> _loadBundled() async {
+    await DebugLog.log('TrailStore._loadBundled() start');
     try {
       final raw = await rootBundle.loadString(bundledAsset);
+      await DebugLog.log(
+          'TrailStore._loadBundled() asset read, ${raw.length} chars, calling _applyRaw');
       _applyRaw(raw);
+      await DebugLog.log('TrailStore._loadBundled() done');
     } catch (e) {
       loadError = 'Bundled trail data failed to load: $e';
+      await DebugLog.log('TrailStore._loadBundled() FAILED: $e');
       notifyListeners();
     }
   }
@@ -55,26 +61,39 @@ class TrailStore extends ChangeNotifier {
     if (isLoading) return;
     isLoading = true;
     notifyListeners();
+    await DebugLog.log('TrailStore.refresh() start (fetching $remoteURL)');
     try {
       final response = await http.get(remoteURL);
+      await DebugLog.log(
+          'TrailStore.refresh() got HTTP ${response.statusCode}, ${response.body.length} chars');
       if (response.statusCode == 200) {
         _applyRaw(response.body);
         loadError = null;
       }
     } catch (e) {
+      await DebugLog.log('TrailStore.refresh() FAILED: $e');
       // Silent — keep whatever bundled data we already have.
     } finally {
       isLoading = false;
       notifyListeners();
+      await DebugLog.log('TrailStore.refresh() done');
     }
   }
 
   /// Parses and assigns new trail data ONLY if the raw JSON actually
   /// differs from what's already loaded — see `_rawJson` doc comment.
   void _applyRaw(String raw) {
-    if (raw == _rawJson) return;
+    if (raw == _rawJson) {
+      unawaited(DebugLog.log(
+          'TrailStore._applyRaw: raw JSON unchanged, skipping reparse'));
+      return;
+    }
+    final sw = Stopwatch()..start();
     _graph = TrailGraph.fromJson(jsonDecode(raw) as Map<String, dynamic>);
     _rawJson = raw;
+    unawaited(DebugLog.log(
+        'TrailStore._applyRaw: parsed NEW graph in ${sw.elapsedMilliseconds}ms '
+        '(${_graph!.ways.length} ways, ${_graph!.nodes.length} nodes)'));
     notifyListeners();
   }
 }
