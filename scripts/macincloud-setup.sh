@@ -50,6 +50,25 @@ ZRC
 export ANDROID_HOME="$HOME/android-sdk"
 export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"
 
+# --- JDK 17+ (sdkmanager refuses to run on anything older; this machine's
+# default `java` was 11.0.16.1). Standalone Temurin download, same
+# no-Homebrew/no-sudo philosophy as everything else here. ---
+JAVA_MAJOR=$(java -version 2>&1 | head -1 | grep -oE '"[0-9]+' | tr -d '"')
+if [ -z "$JAVA_MAJOR" ] || [ "$JAVA_MAJOR" -lt 17 ] 2>/dev/null; then
+  if [ ! -x ~/jdk17/Contents/Home/bin/java ]; then
+    ARCH=$(uname -m)
+    if [ "$ARCH" = "arm64" ]; then ADOPTIUM_ARCH="aarch64"; else ADOPTIUM_ARCH="x64"; fi
+    echo "System Java is too old ($JAVA_MAJOR) for sdkmanager — installing a standalone Temurin 17..."
+    curl -L -o /tmp/jdk17.tar.gz "https://api.adoptium.net/v3/binary/latest/17/ga/mac/$ADOPTIUM_ARCH/jdk/hotspot/normal/eclipse?project=jdk"
+    mkdir -p ~/jdk17
+    tar -xzf /tmp/jdk17.tar.gz -C ~/jdk17 --strip-components=1
+  fi
+  grep -q 'jdk17/Contents/Home"' ~/.zshrc 2>/dev/null || echo 'export JAVA_HOME="$HOME/jdk17/Contents/Home"' >> ~/.zshrc
+  grep -q 'JAVA_HOME/bin:\$PATH' ~/.zshrc 2>/dev/null || echo 'export PATH="$JAVA_HOME/bin:$PATH"' >> ~/.zshrc
+  export JAVA_HOME="$HOME/jdk17/Contents/Home"
+  export PATH="$JAVA_HOME/bin:$PATH"
+fi
+
 echo "Accepting SDK licenses + installing platform-tools (adb)..."
 yes | sdkmanager --licenses > /dev/null
 sdkmanager "platform-tools"
