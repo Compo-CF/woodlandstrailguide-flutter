@@ -74,6 +74,15 @@ class _MapScreenState extends State<MapScreen> {
   /// that always reads a fresh Geolocator fix.
   Position? _lastKnownPosition;
 
+  /// True once it's safe to populate the heavy static overlays (trail
+  /// polylines + POI markers). False for the very first frame after the
+  /// graph loads, so GoogleMap can paint its base tiles + UI chrome
+  /// immediately instead of blocking on ~1,500 polylines' worth of
+  /// platform-channel serialization before anything appears at all —
+  /// see _scheduleOverlayReveal below.
+  bool _overlaysReady = false;
+  bool _overlayRevealScheduled = false;
+
   static const _tierAlways = <String>{
     'parking_park',
     'parking_lots',
@@ -172,6 +181,18 @@ class _MapScreenState extends State<MapScreen> {
       });
     }
 
+    // Reveal the heavy static overlays (trail polylines + POI markers)
+    // one frame after the map itself first has something to show, so
+    // GoogleMap's base tiles + UI chrome paint immediately instead of
+    // the very first frame blocking on ~1,500 polylines' worth of
+    // platform-channel serialization before anything appears at all.
+    if (graph != null && !_overlaysReady && !_overlayRevealScheduled) {
+      _overlayRevealScheduled = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _overlaysReady = true);
+      });
+    }
+
     return Scaffold(
       body: graph == null
           ? _loadingOrError(trailStore)
@@ -203,11 +224,12 @@ class _MapScreenState extends State<MapScreen> {
                   ),
                   mapType: _mapType,
                   polylines: {
-                    ..._wayPolylines(graph, routing),
+                    if (_overlaysReady) ..._wayPolylines(graph, routing),
                     ..._routePolyline(graph, routing),
                   },
                   markers: {
-                    ..._poiMarkers(poiStore.categories, graph, routing),
+                    if (_overlaysReady)
+                      ..._poiMarkers(poiStore.categories, graph, routing),
                     ..._routingMarkers(graph, routing),
                   },
                   onMapCreated: (c) => _controller = c,
