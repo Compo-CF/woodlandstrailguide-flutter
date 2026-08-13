@@ -1,4 +1,4 @@
-package com.compofelice.woodlandstrailguide_flutter
+package com.compofelice.woodlandstrailguide
 
 import io.flutter.embedding.android.FlutterActivity
 

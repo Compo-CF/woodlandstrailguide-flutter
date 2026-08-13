@@ -18,7 +18,7 @@ if (keystorePropertiesFile.exists()) {
 }
 
 android {
-    namespace = "com.compofelice.woodlandstrailguide_flutter"
+    namespace = "com.compofelice.woodlandstrailguide"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -28,7 +28,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.compofelice.woodlandstrailguide_flutter"
+        applicationId = "com.compofelice.woodlandstrailguide"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
