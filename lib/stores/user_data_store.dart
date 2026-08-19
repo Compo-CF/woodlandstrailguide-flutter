@@ -9,6 +9,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/travel_mode.dart';
 import '../models/trip_log_entry.dart';
 
 class UserDataStore extends ChangeNotifier {
@@ -18,8 +19,18 @@ class UserDataStore extends ChangeNotifier {
   static const _appLaunchesKey = 'appLaunches.v1';
   static const _tripLogKey = 'tripLog.v1';
   static const _routesCompletedKey = 'routesCompleted.v1';
+  static const _travelModeKey = 'travelMode.v1';
+  static const _preferPavedKey = 'preferPavedRoutes.v1';
 
   SharedPreferences? _prefs;
+
+  /// Walk/jog/run/bike — changes the pace assumption used for every
+  /// ETA/duration display. Doesn't change the routed path itself.
+  TravelMode travelMode = TravelMode.walk;
+  /// When on, routing penalizes natural-surface trail edges so the
+  /// router strongly prefers paved pathways. Still finds a route even
+  /// if the only path is unpaved (penalty, not exclusion).
+  bool preferPavedRoutes = false;
 
   /// True once load() has populated state from disk. Callers that need
   /// to distinguish "hasn't loaded yet" from "genuinely false" (e.g.
@@ -41,6 +52,8 @@ class UserDataStore extends ChangeNotifier {
     favoriteWayIDs = (_prefs!.getStringList(_favoritesKey) ?? const []).toSet();
     appLaunches = _prefs!.getInt(_appLaunchesKey) ?? 0;
     routesCompleted = _prefs!.getInt(_routesCompletedKey) ?? 0;
+    travelMode = TravelMode.fromName(_prefs!.getString(_travelModeKey));
+    preferPavedRoutes = _prefs!.getBool(_preferPavedKey) ?? false;
     final raw = _prefs!.getString(_tripLogKey);
     if (raw != null) {
       try {
@@ -72,6 +85,18 @@ class UserDataStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> setTravelMode(TravelMode mode) async {
+    travelMode = mode;
+    await _prefs?.setString(_travelModeKey, mode.name);
+    notifyListeners();
+  }
+
+  Future<void> setPreferPavedRoutes(bool value) async {
+    preferPavedRoutes = value;
+    await _prefs?.setBool(_preferPavedKey, value);
+    notifyListeners();
+  }
+
   bool isFavorite(String id) => favoriteWayIDs.contains(id);
 
   Future<void> toggleFavorite(String id) async {
@@ -90,6 +115,8 @@ class UserDataStore extends ChangeNotifier {
     required double distanceMeters,
     required String startLabel,
     required String endLabel,
+    double? durationSeconds,
+    TravelMode? travelMode,
   }) async {
     final entry = TripLogEntry(
       id: DateTime.now().microsecondsSinceEpoch.toString(),
@@ -97,6 +124,8 @@ class UserDataStore extends ChangeNotifier {
       distanceMeters: distanceMeters,
       startLabel: startLabel,
       endLabel: endLabel,
+      durationSeconds: durationSeconds,
+      travelMode: travelMode ?? this.travelMode,
     );
     tripLog.insert(0, entry);
     // Cap to the most recent 100 to keep storage compact.

@@ -12,6 +12,28 @@ import 'dart:math' as math;
 
 import '../models/trail_graph.dart';
 
+/// Surface preference for route generation. `.any` is neutral; `.paved`/
+/// `.natural` penalize (never exclude) the disfavored Way.kind 8x, so the
+/// router still always finds a route but strongly prefers the matching
+/// surface when an alternative exists. Direct port of iOS Router.swift's
+/// SurfacePreference.
+enum SurfacePreference {
+  any,
+  paved,
+  natural;
+
+  String get label {
+    switch (this) {
+      case SurfacePreference.any:
+        return 'Any surface';
+      case SurfacePreference.paved:
+        return 'Paved paths';
+      case SurfacePreference.natural:
+        return 'Natural trails';
+    }
+  }
+}
+
 enum TurnKind {
   start,
   continueStraight,
@@ -124,9 +146,15 @@ class TrailRouter {
   /// Find a graph node approximately [targetMeters] away from [start] by
   /// route distance. Used for loop generation: route(through: [start,
   /// farNode, start]) yields a walk of roughly 2x targetMeters.
-  int? farthestNode(int start, double target) {
+  ///
+  /// [surfacePreference] applies the same paved/natural penalty used by
+  /// routing to the search itself, so e.g. a "paved only" plan doesn't
+  /// pick a far node buried in a natural-surface cul-de-sac.
+  int? farthestNode(int start, double target,
+      {SurfacePreference surfacePreference = SurfacePreference.any}) {
     final n = graph.nodes.length;
     if (start < 0 || start >= n || target <= 0) return null;
+    final weight = _weightFor(surfacePreference);
 
     final dist = List<double>.filled(n, double.infinity);
     dist[start] = 0;
@@ -138,7 +166,7 @@ class TrailRouter {
       if (cur.dist > dist[cur.node]) continue;
       if (cur.dist > target * 1.5) continue;
       for (final edge in graph.adj[cur.node]) {
-        final nd = cur.dist + edge.lengthMeters;
+        final nd = cur.dist + edge.lengthMeters * weight(edge.wayIndex);
         if (nd < dist[edge.neighbor]) {
           dist[edge.neighbor] = nd;
           heap.push(_HeapEntry(edge.neighbor, nd));
@@ -179,11 +207,19 @@ class TrailRouter {
   }
 
   /// Dijkstra from [start] to [end]. Returns null if no path exists.
-  RouteResult? route(int start, int end) => routeThrough([start, end]);
+  RouteResult? route(int start, int end,
+          {SurfacePreference surfacePreference = SurfacePreference.any}) =>
+      routeThrough([start, end], surfacePreference: surfacePreference);
 
   /// Route through an ordered sequence of stops. Each adjacent pair is
   /// computed with an independent Dijkstra run and stitched together.
-  RouteResult? routeThrough(List<int> stops) {
+  ///
+  /// [surfacePreference] heavily penalizes (never excludes) the
+  /// disfavored surface kind, so the router still always finds a route
+  /// but strongly prefers the matching surface when an alternative
+  /// exists.
+  RouteResult? routeThrough(List<int> stops,
+      {SurfacePreference surfacePreference = SurfacePreference.any}) {
     if (stops.length < 2) {
       if (stops.length == 1) {
         return RouteResult(
@@ -197,12 +233,13 @@ class TrailRouter {
       return null;
     }
 
+    final weight = _weightFor(surfacePreference);
     var combinedPath = <int>[];
     var combinedEdgeWays = <int>[];
     var totalMeters = 0.0;
 
     for (var i = 0; i < stops.length - 1; i++) {
-      final segment = _pathFrom(stops[i], stops[i + 1]);
+      final segment = _pathFrom(stops[i], stops[i + 1], weight: weight);
       if (segment == null) return null;
       if (combinedPath.isEmpty) {
         combinedPath = segment.path;
@@ -224,12 +261,79 @@ class TrailRouter {
     );
   }
 
-  _PathResult? _pathFrom(int start, int end) {
+  /// Builds a genuine loop from [start] out to [far] and back. Unlike
+  /// `routeThrough([start, far, start])` — which runs the same weighted
+  /// Dijkstra in both directions and will almost always retrace the
+  /// exact same edges — this discourages the return leg from reusing
+  /// the outbound leg's edges, so it prefers a different way home
+  /// whenever the network offers one. Degrades gracefully to a retrace
+  /// on a dead-end trail where no alternative exists.
+  RouteResult? loopRoute(int start, int far,
+      {SurfacePreference surfacePreference = SurfacePreference.any}) {
+    final weight = _weightFor(surfacePreference);
+    final outbound = _pathFrom(start, far, weight: weight);
+    if (outbound == null) return null;
+    final usedEdges = _edgeKeysForPath(outbound.path);
+    final inbound =
+        _pathFrom(far, start, weight: weight, discourage: usedEdges);
+    if (inbound == null) return null;
+
+    var combinedPath = List<int>.from(outbound.path);
+    if (combinedPath.isNotEmpty && combinedPath.last == inbound.path.first) {
+      combinedPath.addAll(inbound.path.skip(1));
+    } else {
+      combinedPath.addAll(inbound.path);
+    }
+    final combinedEdgeWays = [...outbound.edgeWays, ...inbound.edgeWays];
+    final totalMeters = outbound.lengthMeters + inbound.lengthMeters;
+
+    return RouteResult(
+      nodes: combinedPath,
+      lengthMeters: totalMeters,
+      namedSegments: _collapseSegments(combinedEdgeWays, combinedPath),
+      parks: _uniqueParks(combinedEdgeWays),
+      turnInstructions: _buildTurnInstructions(combinedEdgeWays, combinedPath),
+    );
+  }
+
+  /// Per-wayIndex cost multiplier for the given surface preference.
+  /// `.any` is neutral; `.paved`/`.natural` penalize the disfavored kind
+  /// 8x without excluding it.
+  double Function(int) _weightFor(SurfacePreference preference) {
+    switch (preference) {
+      case SurfacePreference.any:
+        return (_) => 1.0;
+      case SurfacePreference.paved:
+        return (wayIndex) => graph.ways[wayIndex].kind == 'trail' ? 8.0 : 1.0;
+      case SurfacePreference.natural:
+        return (wayIndex) => graph.ways[wayIndex].kind == 'trail' ? 1.0 : 8.0;
+    }
+  }
+
+  /// Undirected edge identity (min/max node pair) — used by loopRoute to
+  /// discourage the return leg from retracing the outbound leg's edges.
+  Set<_EdgeKey> _edgeKeysForPath(List<int> path) {
+    final keys = <_EdgeKey>{};
+    for (var i = 0; i < path.length - 1; i++) {
+      keys.add(_EdgeKey(path[i], path[i + 1]));
+    }
+    return keys;
+  }
+
+  /// [weight] scales an edge's real length for path CHOICE only — the
+  /// returned lengthMeters is always the true physical distance,
+  /// recomputed separately, so a caller weighting toward paved surfaces
+  /// still gets an honest mileage figure. [discourage] heavily up-weights
+  /// specific undirected edges without excluding them — used only by
+  /// loopRoute.
+  _PathResult? _pathFrom(int start, int end,
+      {double Function(int)? weight, Set<_EdgeKey>? discourage}) {
     final n = graph.nodes.length;
     if (start < 0 || start >= n || end < 0 || end >= n) return null;
     if (start == end) {
       return _PathResult(path: [start], edgeWays: const [], lengthMeters: 0);
     }
+    final w = weight ?? (_) => 1.0;
 
     final dist = List<double>.filled(n, double.infinity);
     final prev = List<int>.filled(n, -1);
@@ -244,7 +348,13 @@ class TrailRouter {
       if (cur.dist > dist[cur.node]) continue;
       if (cur.node == end) break;
       for (final edge in graph.adj[cur.node]) {
-        final nd = cur.dist + edge.lengthMeters;
+        var cost = edge.lengthMeters * w(edge.wayIndex);
+        if (discourage != null &&
+            discourage.isNotEmpty &&
+            discourage.contains(_EdgeKey(cur.node, edge.neighbor))) {
+          cost *= 6.0;
+        }
+        final nd = cur.dist + cost;
         if (nd < dist[edge.neighbor]) {
           dist[edge.neighbor] = nd;
           prev[edge.neighbor] = cur.node;
@@ -266,10 +376,20 @@ class TrailRouter {
     }
     final reversedPath = path.reversed.toList();
     final reversedEdgeWays = edgeWays.reversed.toList();
+
+    // realMeters: true physical distance along the chosen path, summed
+    // from real edge lengths — never the weighted cost used to pick it.
+    var realMeters = 0.0;
+    for (var i = 0; i < reversedPath.length - 1; i++) {
+      final match = graph.adj[reversedPath[i]].firstWhere(
+          (e) => e.neighbor == reversedPath[i + 1],
+          orElse: () => const Edge(neighbor: -1, lengthMeters: 0, wayIndex: -1));
+      realMeters += match.lengthMeters;
+    }
     return _PathResult(
       path: reversedPath,
       edgeWays: reversedEdgeWays,
-      lengthMeters: dist[end],
+      lengthMeters: realMeters,
     );
   }
 
@@ -534,6 +654,22 @@ class _PathResult {
   final List<int> edgeWays;
   final double lengthMeters;
   const _PathResult({required this.path, required this.edgeWays, required this.lengthMeters});
+}
+
+/// Undirected edge identity (min/max node pair) — used by loopRoute to
+/// discourage the return leg from retracing the outbound leg's edges.
+class _EdgeKey {
+  final int a;
+  final int b;
+  _EdgeKey(int x, int y)
+      : a = x < y ? x : y,
+        b = x < y ? y : x;
+
+  @override
+  bool operator ==(Object other) => other is _EdgeKey && other.a == a && other.b == b;
+
+  @override
+  int get hashCode => Object.hash(a, b);
 }
 
 class _EdgeInfo {

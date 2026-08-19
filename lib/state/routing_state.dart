@@ -17,6 +17,11 @@ class RoutingState extends ChangeNotifier {
   List<int> waypointNodes = [];
   RouteResult? route;
 
+  /// Set from UserDataStore.preferPavedRoutes by MapScreen whenever it
+  /// changes. recompute() reads this directly so toggling the setting
+  /// immediately updates any active route.
+  SurfacePreference surfacePreference = SurfacePreference.any;
+
   /// True while the user has tapped "+ Waypoint" and the next map tap
   /// should append to waypointNodes instead of touching start/end.
   bool addingWaypoint = false;
@@ -78,8 +83,16 @@ class RoutingState extends ChangeNotifier {
     }
     final router = TrailRouter(graph);
     final stops = [startNode!, ...waypointNodes, endNode!];
-    route = router.routeThrough(stops);
+    route = router.routeThrough(stops, surfacePreference: surfacePreference);
     notifyListeners();
+  }
+
+  /// Updates the surface preference and immediately recomputes any
+  /// active route against it — mirrors iOS's "Prefer paved paths"
+  /// toggle in the map's more-options menu.
+  void setSurfacePreference(SurfacePreference preference, TrailGraph graph) {
+    surfacePreference = preference;
+    recompute(graph);
   }
 
   void setStart(int node, TrailGraph graph) {

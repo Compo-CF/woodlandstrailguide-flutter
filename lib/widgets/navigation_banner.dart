@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../models/travel_mode.dart';
 import '../services/router.dart';
 import '../theme/natural_palette.dart';
 
@@ -13,12 +14,14 @@ class NavigationBanner extends StatelessWidget {
   final RouteResult route;
   final RouteProgress? progress;
   final VoidCallback onEnd;
+  final TravelMode travelMode;
 
   const NavigationBanner({
     super.key,
     required this.route,
     required this.progress,
     required this.onEnd,
+    this.travelMode = TravelMode.walk,
   });
 
   @override
@@ -111,7 +114,7 @@ class NavigationBanner extends StatelessWidget {
                       fontWeight: FontWeight.w600,
                       color: NaturalPalette.ink)),
               const SizedBox(width: 6),
-              Text('· ${_walkingTime(remaining)} remaining',
+              Text('· ${_travelTime(remaining)} remaining',
                   style: const TextStyle(
                       fontSize: 14, color: NaturalPalette.inkMuted)),
               const Spacer(),
@@ -181,8 +184,8 @@ class NavigationBanner extends StatelessWidget {
     }
   }
 
-  String _walkingTime(double meters) {
-    final minutes = meters / 1609.344 / 3.0 * 60.0;
+  String _travelTime(double meters) {
+    final minutes = meters / 1609.344 / travelMode.paceMph * 60.0;
     if (minutes < 1) return '<1 min';
     if (minutes < 60) return '${minutes.round()} min';
     final h = minutes ~/ 60;

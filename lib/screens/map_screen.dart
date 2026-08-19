@@ -9,6 +9,7 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../models/poi.dart';
 import '../models/trail_graph.dart';
+import '../models/travel_mode.dart';
 import '../services/debug_log.dart';
 import '../services/elevation_service.dart';
 import '../services/iap_store.dart';
@@ -69,6 +70,10 @@ class _MapScreenState extends State<MapScreen> {
   /// markRouteCompleted() fire exactly once per completed walk, not on
   /// every position update after arrival.
   bool _wasArrived = false;
+
+  /// Wall-clock start of the active navigation session — used to compute
+  /// a real walk duration for the trip log on arrival.
+  DateTime? _navigationStartedAt;
 
   /// Best-effort last-known position, used only to show "X mi from you"
   /// in the POI detail sheet. Not authoritative for navigation math —
@@ -176,6 +181,7 @@ class _MapScreenState extends State<MapScreen> {
     final weatherStore = context.watch<WeatherStore>();
     final elevationService = context.watch<ElevationService>();
     final iap = context.watch<IAPStore>();
+    final userData = context.watch<UserDataStore>();
     final graph = trailStore.graph;
 
     // A pending route arrived (deep link or Featured Walks' "Walk this
@@ -205,7 +211,7 @@ class _MapScreenState extends State<MapScreen> {
           ? _loadingOrError(trailStore)
           : Column(
               children: [
-                Expanded(child: _mapStack(graph, poiStore, routing, weatherStore, elevationService)),
+                Expanded(child: _mapStack(graph, poiStore, routing, weatherStore, elevationService, userData)),
                 // Sits below the map content like iOS's
                 // safeAreaInset(edge: .bottom) — always visible, never
                 // covered by the route summary card or nav banner.
@@ -221,6 +227,7 @@ class _MapScreenState extends State<MapScreen> {
     RoutingState routing,
     WeatherStore weatherStore,
     ElevationService elevationService,
+    UserDataStore userData,
   ) {
     return Stack(
               children: [
@@ -293,6 +300,8 @@ class _MapScreenState extends State<MapScreen> {
                           onTap: () => _openLoopBuilder(graph, routing),
                         ),
                       ],
+                      const SizedBox(height: 10),
+                      _moreOptionsButton(graph, routing, userData),
                     ],
                   ),
                 ),
@@ -332,6 +341,7 @@ class _MapScreenState extends State<MapScreen> {
                       onAddWaypoint: () => routing.toggleWaypointMode(),
                       onShare: () => _shareRoute(graph, routing),
                       elevationProfile: elevationService.profile(routing.route!, graph),
+                      travelMode: userData.travelMode,
                     ),
                   ),
                 if (routing.navigationActive)
@@ -343,6 +353,7 @@ class _MapScreenState extends State<MapScreen> {
                       route: routing.route!,
                       progress: routing.routeProgress,
                       onEnd: () => _endNavigation(routing),
+                      travelMode: userData.travelMode,
                     ),
                   ),
                 if (_showingRerouteToast)
@@ -383,6 +394,7 @@ class _MapScreenState extends State<MapScreen> {
   Future<void> _startNavigation(RoutingState routing) async {
     routing.startNavigation();
     _wasArrived = false;
+    _navigationStartedAt = DateTime.now();
     unawaited(WakelockPlus.enable());
     await _positionSub?.cancel();
     _positionSub = Geolocator.getPositionStream(
@@ -419,12 +431,18 @@ class _MapScreenState extends State<MapScreen> {
       _wasArrived = true;
       final userData = context.read<UserDataStore>();
       final r = routing.route!;
+      final duration = _navigationStartedAt != null
+          ? DateTime.now().difference(_navigationStartedAt!).inSeconds.toDouble()
+          : null;
       userData.markRouteCompleted();
       userData.recordTrip(
         distanceMeters: r.lengthMeters,
         startLabel: r.namedSegments.isNotEmpty ? r.namedSegments.first.name : 'Start',
         endLabel: r.namedSegments.isNotEmpty ? r.namedSegments.last.name : 'Destination',
+        durationSeconds: duration,
+        travelMode: userData.travelMode,
       );
+      _navigationStartedAt = null;
     }
 
     _controller?.animateCamera(
@@ -440,7 +458,8 @@ class _MapScreenState extends State<MapScreen> {
           routing.endNode != null) {
         final newStart = router.nearestNode(pos.latitude, pos.longitude);
         if (newStart != null) {
-          final rerouted = router.route(newStart, routing.endNode!);
+          final rerouted = router.route(newStart, routing.endNode!,
+              surfacePreference: routing.surfacePreference);
           if (rerouted != null) {
             final newProgress =
                 router.progress(rerouted, pos.latitude, pos.longitude);
@@ -895,6 +914,89 @@ class _MapScreenState extends State<MapScreen> {
           child: Icon(icon, size: 20,
               color: selected ? Colors.white : NaturalPalette.forest),
         ),
+      ),
+    );
+  }
+
+  IconData _iconForTravelMode(TravelMode mode) {
+    switch (mode) {
+      case TravelMode.walk:
+        return Icons.directions_walk;
+      case TravelMode.jog:
+      case TravelMode.run:
+        return Icons.directions_run;
+      case TravelMode.bike:
+        return Icons.directions_bike;
+    }
+  }
+
+  /// Travel mode + prefer-paved-paths, grouped into one menu so the
+  /// top-right button stack doesn't grow a new circle for each one.
+  /// Mirrors iOS MapTabView's moreMenuButton.
+  Widget _moreOptionsButton(
+      TrailGraph graph, RoutingState routing, UserDataStore userData) {
+    return Material(
+      color: NaturalPalette.buttonBg,
+      shape: const CircleBorder(),
+      elevation: 3,
+      child: PopupMenuButton<void>(
+        padding: EdgeInsets.zero,
+        shape: const CircleBorder(),
+        icon: Icon(Icons.more_horiz, size: 20, color: NaturalPalette.forest),
+        itemBuilder: (context) => [
+          PopupMenuItem<void>(
+            enabled: false,
+            child: Text('TRAVEL MODE',
+                style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: NaturalPalette.inkMuted,
+                    letterSpacing: 0.6)),
+          ),
+          for (final mode in TravelMode.values)
+            PopupMenuItem<void>(
+              onTap: () => userData.setTravelMode(mode),
+              child: Row(
+                children: [
+                  Icon(_iconForTravelMode(mode),
+                      size: 18,
+                      color: userData.travelMode == mode
+                          ? NaturalPalette.forest
+                          : NaturalPalette.inkMuted),
+                  const SizedBox(width: 10),
+                  Text(mode.label),
+                  if (userData.travelMode == mode) ...[
+                    const Spacer(),
+                    const Icon(Icons.check, size: 16, color: NaturalPalette.forest),
+                  ],
+                ],
+              ),
+            ),
+          const PopupMenuDivider(),
+          PopupMenuItem<void>(
+            onTap: () {
+              final next = !userData.preferPavedRoutes;
+              userData.setPreferPavedRoutes(next);
+              routing.setSurfacePreference(
+                next ? SurfacePreference.paved : SurfacePreference.any,
+                graph,
+              );
+            },
+            child: Row(
+              children: [
+                Icon(
+                  userData.preferPavedRoutes
+                      ? Icons.check_box
+                      : Icons.check_box_outline_blank,
+                  size: 18,
+                  color: NaturalPalette.forest,
+                ),
+                const SizedBox(width: 10),
+                const Text('Prefer paved paths'),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

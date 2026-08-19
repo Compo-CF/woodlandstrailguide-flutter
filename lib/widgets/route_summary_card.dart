@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../models/travel_mode.dart';
 import '../services/elevation_service.dart';
 import '../services/router.dart';
 import '../theme/natural_palette.dart';
@@ -17,6 +18,7 @@ class RouteSummaryCard extends StatelessWidget {
   final VoidCallback? onBuildLoop;
   final VoidCallback? onShare;
   final ElevationProfile? elevationProfile;
+  final TravelMode travelMode;
 
   const RouteSummaryCard({
     super.key,
@@ -27,10 +29,10 @@ class RouteSummaryCard extends StatelessWidget {
     this.onBuildLoop,
     this.onShare,
     this.elevationProfile,
+    this.travelMode = TravelMode.walk,
   });
 
-  /// Average walking speed ~3 mph -> minutes = miles / 3 * 60.
-  int get _estimatedMinutes => (route.miles / 3.0 * 60).round();
+  int get _estimatedMinutes => (route.miles / travelMode.paceMph * 60).round();
 
   @override
   Widget build(BuildContext context) {
@@ -67,7 +69,7 @@ class RouteSummaryCard extends StatelessWidget {
                   const SizedBox(width: 10),
                   Padding(
                     padding: const EdgeInsets.only(bottom: 4),
-                    child: Text('~$_estimatedMinutes min walk',
+                    child: Text('~$_estimatedMinutes min ${travelMode.noun}',
                         style: const TextStyle(
                             color: NaturalPalette.inkMuted, fontSize: 14)),
                   ),
@@ -103,9 +105,9 @@ class RouteSummaryCard extends StatelessWidget {
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(14)),
                       ),
-                      icon: const Icon(Icons.directions_walk),
-                      label: const Text('Start walking',
-                          style: TextStyle(fontWeight: FontWeight.w600)),
+                      icon: Icon(_iconForTravelMode(travelMode)),
+                      label: Text('Start ${travelMode.gerund}',
+                          style: const TextStyle(fontWeight: FontWeight.w600)),
                     ),
                   ),
                   if (onShare != null) ...[
@@ -123,6 +125,18 @@ class RouteSummaryCard extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  IconData _iconForTravelMode(TravelMode mode) {
+    switch (mode) {
+      case TravelMode.walk:
+        return Icons.directions_walk;
+      case TravelMode.jog:
+      case TravelMode.run:
+        return Icons.directions_run;
+      case TravelMode.bike:
+        return Icons.directions_bike;
+    }
   }
 
   Widget _dragHandle() => Center(

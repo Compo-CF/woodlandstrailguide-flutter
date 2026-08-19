@@ -1,3 +1,5 @@
+import '../models/travel_mode.dart';
+
 /// A completed walk. Persisted so users can look back at where they've
 /// been. Mirrors iOS TripLogEntry.
 class TripLogEntry {
@@ -8,6 +10,11 @@ class TripLogEntry {
   final String startLabel;
   /// Name of the last named segment along the route.
   final String endLabel;
+  /// Wall-clock duration in seconds. Nullable — entries recorded before
+  /// this field existed decode gracefully without it.
+  final double? durationSeconds;
+  /// Walk/jog/run/bike. Defaults to walk for pre-existing entries.
+  final TravelMode travelMode;
 
   const TripLogEntry({
     required this.id,
@@ -15,6 +22,8 @@ class TripLogEntry {
     required this.distanceMeters,
     required this.startLabel,
     required this.endLabel,
+    this.durationSeconds,
+    this.travelMode = TravelMode.walk,
   });
 
   double get miles => distanceMeters / 1609.344;
@@ -25,6 +34,8 @@ class TripLogEntry {
         distanceMeters: (json['distanceMeters'] as num).toDouble(),
         startLabel: json['startLabel'] as String,
         endLabel: json['endLabel'] as String,
+        durationSeconds: (json['durationSeconds'] as num?)?.toDouble(),
+        travelMode: TravelMode.fromName(json['travelMode'] as String?),
       );
 
   Map<String, dynamic> toJson() => {
@@ -33,6 +44,8 @@ class TripLogEntry {
         'distanceMeters': distanceMeters,
         'startLabel': startLabel,
         'endLabel': endLabel,
+        if (durationSeconds != null) 'durationSeconds': durationSeconds,
+        'travelMode': travelMode.name,
       };
 }
 
