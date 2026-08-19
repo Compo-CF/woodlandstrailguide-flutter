@@ -15,6 +15,7 @@ class NavigationBanner extends StatelessWidget {
   final RouteProgress? progress;
   final VoidCallback onEnd;
   final TravelMode travelMode;
+  final VoidCallback? onShare;
 
   const NavigationBanner({
     super.key,
@@ -22,6 +23,7 @@ class NavigationBanner extends StatelessWidget {
     required this.progress,
     required this.onEnd,
     this.travelMode = TravelMode.walk,
+    this.onShare,
   });
 
   @override
@@ -118,6 +120,16 @@ class NavigationBanner extends StatelessWidget {
                   style: const TextStyle(
                       fontSize: 14, color: NaturalPalette.inkMuted)),
               const Spacer(),
+              if (onShare != null) ...[
+                IconButton(
+                  onPressed: onShare,
+                  icon: const Icon(Icons.ios_share, size: 18, color: NaturalPalette.forest),
+                  tooltip: 'Share my live ETA',
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                ),
+                const SizedBox(width: 4),
+              ],
               GestureDetector(
                 onTap: onEnd,
                 child: Container(

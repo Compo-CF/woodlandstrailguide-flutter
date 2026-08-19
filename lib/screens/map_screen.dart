@@ -360,6 +360,7 @@ class _MapScreenState extends State<MapScreen> {
                       progress: routing.routeProgress,
                       onEnd: () => _endNavigation(routing),
                       travelMode: userData.travelMode,
+                      onShare: () => _shareLiveETA(graph, routing, userData),
                     ),
                   ),
                 if (_showingRerouteToast)
@@ -641,25 +642,55 @@ class _MapScreenState extends State<MapScreen> {
   /// route and opens the native share sheet. Mirrors iOS's ShareLink
   /// wired to RoutingBridge.buildShareURL.
   Future<void> _shareRoute(TrailGraph graph, RoutingState routing) async {
+    final url = _buildShareUrl(graph, routing);
+    if (url == null) return;
+    final miles = routing.route?.miles ?? 0;
+    await Share.share(
+      'Check out this ${miles.toStringAsFixed(1)} mi walk in The '
+      'Woodlands — open it in Woodlands Trail Guide:\n$url',
+    );
+  }
+
+  /// Live-ETA share — fired from the nav banner during an active walk.
+  /// Shares current progress + a rough finish estimate, not just the
+  /// plan. Mirrors iOS's liveShareMessage wired to the same ShareLink
+  /// machinery as the pre-walk share.
+  Future<void> _shareLiveETA(
+      TrailGraph graph, RoutingState routing, UserDataStore userData) async {
+    final url = _buildShareUrl(graph, routing);
+    if (url == null) return;
+    final remaining = routing.routeProgress?.remainingMeters ??
+        routing.route?.lengthMeters ??
+        0;
+    final miles = (remaining / 1609.344).toStringAsFixed(2);
+    final minutes = remaining / 1609.344 / userData.travelMode.paceMph * 60.0;
+    final time = minutes < 1
+        ? '<1 min'
+        : minutes < 60
+            ? '${minutes.round()} min'
+            : '${minutes ~/ 60} hr ${(minutes.round() % 60)} min';
+    await Share.share(
+      "I'm currently ${userData.travelMode.gerund} in The Woodlands — "
+      '$miles mi and about $time left. Open this link in Woodlands Trail '
+      'Guide to see the route:\n$url',
+    );
+  }
+
+  Uri? _buildShareUrl(TrailGraph graph, RoutingState routing) {
     final start = routing.startNode;
     final end = routing.endNode;
-    if (start == null || end == null) return;
+    if (start == null || end == null) return null;
     final startCoord = graph.nodes[start];
     final endCoord = graph.nodes[end];
     final waypoints = routing.waypointNodes
         .map((n) => [graph.nodes[n].lat, graph.nodes[n].lon])
         .toList();
-    final url = RoutingBridge.buildShareUrl(
+    return RoutingBridge.buildShareUrl(
       startLat: startCoord.lat,
       startLon: startCoord.lon,
       endLat: endCoord.lat,
       endLon: endCoord.lon,
       waypoints: waypoints,
-    );
-    final miles = routing.route?.miles ?? 0;
-    await Share.share(
-      'Check out this ${miles.toStringAsFixed(1)} mi walk in The '
-      'Woodlands — open it in Woodlands Trail Guide:\n$url',
     );
   }
 
