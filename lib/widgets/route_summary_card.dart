@@ -19,6 +19,12 @@ class RouteSummaryCard extends StatelessWidget {
   final VoidCallback? onShare;
   final ElevationProfile? elevationProfile;
   final TravelMode travelMode;
+  final RoutePlan? activePlan;
+  /// Straight-line distance from the user to the nearest point on the
+  /// route, shown as "X to reach the trail from here" when it exceeds
+  /// a meaningful threshold — so an off-network start isn't a surprise
+  /// once the user taps Start. Null/zero hides the row.
+  final double? distanceToRoute;
 
   const RouteSummaryCard({
     super.key,
@@ -30,6 +36,8 @@ class RouteSummaryCard extends StatelessWidget {
     this.onShare,
     this.elevationProfile,
     this.travelMode = TravelMode.walk,
+    this.activePlan,
+    this.distanceToRoute,
   });
 
   int get _estimatedMinutes => (route.miles / travelMode.paceMph * 60).round();
@@ -80,6 +88,49 @@ class RouteSummaryCard extends StatelessWidget {
                   ),
                 ],
               ),
+              if (activePlan != null) ...[
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Icon(
+                      activePlan!.shape == PlannedRouteShape.loop
+                          ? Icons.all_inclusive
+                          : Icons.swap_horiz,
+                      size: 14,
+                      color: NaturalPalette.forest,
+                    ),
+                    const SizedBox(width: 5),
+                    Flexible(
+                      child: Text(
+                        'Planned ${(activePlan!.targetMeters / 1609.344).toStringAsFixed(1)} '
+                        'mi ${activePlan!.shape.label.toLowerCase()}'
+                        '${activePlan!.surfacePreference != SurfacePreference.any ? ' · ${activePlan!.surfacePreference.label}' : ''}',
+                        style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                            color: NaturalPalette.forest),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+              if ((distanceToRoute ?? 0) > 100) ...[
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    const Icon(Icons.signpost_outlined, size: 14, color: NaturalPalette.inkMuted),
+                    const SizedBox(width: 5),
+                    Flexible(
+                      child: Text(
+                        '${_distanceText(distanceToRoute!)} to reach the trail from here',
+                        style: const TextStyle(fontSize: 12, color: NaturalPalette.inkMuted),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
               if (elevationProfile != null) ...[
                 const SizedBox(height: 14),
                 ElevationChartView(profile: elevationProfile!),
@@ -137,6 +188,12 @@ class RouteSummaryCard extends StatelessWidget {
       case TravelMode.bike:
         return Icons.directions_bike;
     }
+  }
+
+  String _distanceText(double meters) {
+    final miles = meters / 1609.344;
+    if (miles >= 0.1) return '${miles.toStringAsFixed(2)} mi';
+    return '${(meters * 3.28084).round()} ft';
   }
 
   Widget _dragHandle() => Center(

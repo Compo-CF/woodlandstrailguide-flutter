@@ -24,9 +24,9 @@ import '../stores/weather_store.dart';
 import '../theme/natural_palette.dart';
 import '../widgets/achievements_sheet.dart';
 import '../widgets/admob_banner.dart';
-import '../widgets/loop_builder_sheet.dart';
 import '../widgets/navigation_banner.dart';
 import '../widgets/poi_detail_sheet.dart';
+import '../widgets/route_planner_sheet.dart';
 import '../widgets/route_summary_card.dart';
 import '../widgets/search_sheet.dart';
 import '../widgets/trail_detail_sheet.dart';
@@ -80,6 +80,15 @@ class _MapScreenState extends State<MapScreen> {
   /// Set right after a walk completes if it earned any new achievements.
   /// Drives a brief celebratory toast (dismisses itself after a few sec).
   Achievement? _toastAchievement;
+
+  /// True once the user has come within `_offRouteThreshold` of the
+  /// route at least once since tapping "Start". Gates the off-route
+  /// auto-reroute below so starting navigation off-network (a driveway,
+  /// a street that isn't part of the pathway graph) isn't silently
+  /// mistaken for having drifted off an already-joined route — instead
+  /// NavigationBanner shows a distinct "walk to the trail" state until
+  /// the user actually reaches it.
+  bool _hasJoinedRoute = false;
 
   /// Best-effort last-known position, used only to show "X mi from you"
   /// in the POI detail sheet. Not authoritative for navigation math —
@@ -299,13 +308,11 @@ class _MapScreenState extends State<MapScreen> {
                         icon: Icons.search,
                         onTap: () => _openSearch(graph, poiStore, routing),
                       ),
-                      if (routing.routingMode) ...[
-                        const SizedBox(height: 10),
-                        _floatingButton(
-                          icon: Icons.all_inclusive,
-                          onTap: () => _openLoopBuilder(graph, routing),
-                        ),
-                      ],
+                      const SizedBox(height: 10),
+                      _floatingButton(
+                        icon: Icons.directions_run,
+                        onTap: () => _openRoutePlanner(graph, routing, userData),
+                      ),
                       const SizedBox(height: 10),
                       _moreOptionsButton(graph, routing, userData),
                     ],
@@ -342,12 +349,22 @@ class _MapScreenState extends State<MapScreen> {
                     bottom: 0,
                     child: RouteSummaryCard(
                       route: routing.route!,
-                      onStartWalking: () => _startNavigation(routing),
-                      onClear: () => routing.clearRoute(),
+                      onStartWalking: () => _startNavigation(routing, graph),
+                      onClear: () => setState(() {
+                        routing.clearRoute();
+                        _hasJoinedRoute = false;
+                      }),
                       onAddWaypoint: () => routing.toggleWaypointMode(),
                       onShare: () => _shareRoute(graph, routing),
                       elevationProfile: elevationService.profile(routing.route!, graph),
                       travelMode: userData.travelMode,
+                      activePlan: routing.activePlan,
+                      distanceToRoute: _lastKnownPosition != null
+                          ? TrailRouter(graph)
+                              .progress(routing.route!, _lastKnownPosition!.latitude,
+                                  _lastKnownPosition!.longitude)
+                              .distanceFromRoute
+                          : null,
                     ),
                   ),
                 if (routing.navigationActive)
@@ -361,6 +378,7 @@ class _MapScreenState extends State<MapScreen> {
                       onEnd: () => _endNavigation(routing),
                       travelMode: userData.travelMode,
                       onShare: () => _shareLiveETA(graph, routing, userData),
+                      hasJoinedRoute: _hasJoinedRoute,
                     ),
                   ),
                 if (_showingRerouteToast)
@@ -405,10 +423,21 @@ class _MapScreenState extends State<MapScreen> {
   /// on for the duration (mirrors iOS's isIdleTimerDisabled toggle),
   /// and start a GPS stream that drives route progress + off-route
   /// detection + camera follow.
-  Future<void> _startNavigation(RoutingState routing) async {
+  Future<void> _startNavigation(RoutingState routing, TrailGraph graph) async {
     routing.startNavigation();
     _wasArrived = false;
     _navigationStartedAt = DateTime.now();
+    _hasJoinedRoute = false;
+    // Compute initial progress so the banner shows real numbers from the
+    // first frame, and so hasJoinedRoute reflects reality immediately
+    // (the common case: starting right at the trailhead) instead of
+    // flashing the "walk to the trail" state for one frame.
+    if (_lastKnownPosition != null && routing.route != null) {
+      final progress = TrailRouter(graph).progress(
+          routing.route!, _lastKnownPosition!.latitude, _lastKnownPosition!.longitude);
+      routing.updateProgress(progress);
+      _hasJoinedRoute = progress.distanceFromRoute <= _offRouteThreshold;
+    }
     unawaited(WakelockPlus.enable());
     await _positionSub?.cancel();
     _positionSub = Geolocator.getPositionStream(
@@ -432,6 +461,7 @@ class _MapScreenState extends State<MapScreen> {
     _positionSub = null;
     unawaited(WakelockPlus.disable());
     _offRouteSince = null;
+    _hasJoinedRoute = false;
     routing.endNavigation();
   }
 
@@ -445,6 +475,14 @@ class _MapScreenState extends State<MapScreen> {
     final router = TrailRouter(graph);
     final progress = router.progress(routing.route!, pos.latitude, pos.longitude);
     routing.updateProgress(progress);
+
+    // Watch for the user actually reaching the route — until then, the
+    // off-route/reroute logic below stays disabled (see _hasJoinedRoute
+    // doc comment): starting off-network shouldn't look identical to
+    // having drifted off an already-joined route.
+    if (!_hasJoinedRoute && progress.distanceFromRoute <= _offRouteThreshold) {
+      setState(() => _hasJoinedRoute = true);
+    }
 
     // First time this walk hits "arrived" — record it. Guarded by
     // _wasArrived so it fires exactly once per completed route, not on
@@ -475,7 +513,10 @@ class _MapScreenState extends State<MapScreen> {
 
     // Off-route auto-reroute: if the user has drifted past the threshold
     // for the sustained duration, silently recompute from their current
-    // position to the same destination. Waypoints are dropped.
+    // position to the same destination. Waypoints are dropped. Only
+    // runs once the walk has actually been joined — see above.
+    if (!_hasJoinedRoute) return;
+
     if (progress.distanceFromRoute > _offRouteThreshold && !progress.isArrived) {
       _offRouteSince ??= DateTime.now();
       if (DateTime.now().difference(_offRouteSince!) > _offRouteDuration &&
@@ -541,6 +582,7 @@ class _MapScreenState extends State<MapScreen> {
         final router = TrailRouter(graph);
         final node = router.nearestNode(poi.lat, poi.lon);
         if (node == null) return;
+        routing.clearActivePlan();
         if (!routing.routingMode) routing.enterRoutingMode();
         routing.setStart(node, graph);
       },
@@ -596,27 +638,35 @@ class _MapScreenState extends State<MapScreen> {
     } catch (_) {}
   }
 
-  /// Opens the loop-distance picker, then resolves the user's nearest
-  /// node as the loop's start and Router.farthestNode(atRouteDistance:
-  /// miles/2) as the turnaround point, mirroring iOS LoopBuilderSheet.
-  Future<void> _openLoopBuilder(TrailGraph graph, RoutingState routing) async {
+  /// Opens the route planner (distance/time target, activity, path
+  /// type, loop vs out-and-back), snapshotting the user's current
+  /// location once up front so the sheet's node lookups can stay
+  /// synchronous. Direct port of iOS's plannerButton flow.
+  Future<void> _openRoutePlanner(
+      TrailGraph graph, RoutingState routing, UserDataStore userData) async {
     if (!_hasLocationPermission) {
       await _initLocation();
       if (!_hasLocationPermission) return;
     }
     if (!mounted) return;
-    await LoopBuilderSheet.show(context, onGenerate: (miles) async {
-      try {
-        final pos = await Geolocator.getCurrentPosition(
-            desiredAccuracy: LocationAccuracy.high);
-        final router = TrailRouter(graph);
-        final start = router.nearestNode(pos.latitude, pos.longitude);
-        if (start == null) return;
-        final far = router.farthestNode(start, miles * 1609.344 / 2);
-        if (far == null) return;
-        routing.applyStops([start, far, start], graph);
-      } catch (_) {}
-    });
+    Position pos;
+    try {
+      pos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+    } catch (_) {
+      return;
+    }
+    if (!mounted) return;
+    final router = TrailRouter(graph);
+    await RoutePlannerSheet.show(
+      context,
+      nearestNodeToUser: () => router.nearestNode(pos.latitude, pos.longitude),
+      farthestNode: (start, targetMeters, pref) =>
+          router.farthestNode(start, targetMeters, surfacePreference: pref),
+      onGenerate: (start, far, plan) {
+        routing.applyPlan(start, far, plan, graph);
+        userData.setTravelMode(plan.activity);
+      },
+    );
   }
 
   /// Resolves a pending route (from a deep link or Featured Walks) to

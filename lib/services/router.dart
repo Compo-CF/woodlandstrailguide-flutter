@@ -11,6 +11,7 @@
 import 'dart:math' as math;
 
 import '../models/trail_graph.dart';
+import '../models/travel_mode.dart';
 
 /// Surface preference for route generation. `.any` is neutral; `.paved`/
 /// `.natural` penalize (never exclude) the disfavored Way.kind 8x, so the
@@ -32,6 +33,44 @@ enum SurfacePreference {
         return 'Natural trails';
     }
   }
+}
+
+/// Shape of a planner-generated route: a genuine loop (different path
+/// back, when one's available) or an out-and-back retrace. Direct port
+/// of iOS PlannedRouteShape.
+enum PlannedRouteShape {
+  loop,
+  outAndBack;
+
+  String get label => this == PlannedRouteShape.loop ? 'Loop' : 'Out & back';
+
+  String get blurb => this == PlannedRouteShape.loop
+      ? "Different path back, when one's available"
+      : 'Retrace the same path home';
+}
+
+/// A distance/time target the route planner generated a route for.
+/// Threaded through RoutingState so off-route reroutes and the
+/// prefer-paved toggle keep recomputing consistently with the original
+/// plan. Direct port of iOS RoutePlan.
+class RoutePlan {
+  final PlannedRouteShape shape;
+  final SurfacePreference surfacePreference;
+  /// The target the user picked, in meters — for display ("Planned ~3
+  /// mi loop"). The actual generated route.lengthMeters may differ
+  /// slightly since it's constrained to the real pathway network.
+  final double targetMeters;
+  /// Walk/jog/run chosen in the planner — applied to
+  /// UserDataStore.travelMode on generate so ETA display matches the
+  /// intended activity.
+  final TravelMode activity;
+
+  const RoutePlan({
+    required this.shape,
+    required this.surfacePreference,
+    required this.targetMeters,
+    required this.activity,
+  });
 }
 
 enum TurnKind {

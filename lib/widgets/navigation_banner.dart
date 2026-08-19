@@ -16,6 +16,13 @@ class NavigationBanner extends StatelessWidget {
   final VoidCallback onEnd;
   final TravelMode travelMode;
   final VoidCallback? onShare;
+  /// True once the user has come within the join threshold of the route
+  /// at least once since navigation started. While false, shows a
+  /// distinct "head to the trail" state instead of turn-by-turn — the
+  /// app has no street geometry, so this is an honest straight-line
+  /// distance, not real directions. Direct port of iOS's
+  /// hasJoinedRoute/joiningRouteContent split.
+  final bool hasJoinedRoute;
 
   const NavigationBanner({
     super.key,
@@ -24,18 +31,11 @@ class NavigationBanner extends StatelessWidget {
     required this.onEnd,
     this.travelMode = TravelMode.walk,
     this.onShare,
+    this.hasJoinedRoute = true,
   });
 
   @override
   Widget build(BuildContext context) {
-    final upcoming = progress?.upcomingInstruction ??
-        (route.turnInstructions.isNotEmpty ? route.turnInstructions.first : null);
-    final isArrived = progress?.isArrived ?? false;
-    final remaining = progress?.remainingMeters ?? route.lengthMeters;
-    final distanceToNext = progress?.distanceToNext ??
-        (route.turnInstructions.isNotEmpty ? route.turnInstructions.first.legMeters : 0);
-    final offRoute = (progress?.distanceFromRoute ?? 0) > 30;
-
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 0, 12, 14),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -47,7 +47,81 @@ class NavigationBanner extends StatelessWidget {
           BoxShadow(color: Color(0x1F000000), blurRadius: 10, offset: Offset(0, 4)),
         ],
       ),
-      child: Column(
+      child: hasJoinedRoute ? _activeNavigationContent() : _joiningRouteContent(),
+    );
+  }
+
+  /// Shown once "Start" is tapped but before the user has reached the
+  /// route — e.g. they started from a driveway or a street off the
+  /// pathway network.
+  Widget _joiningRouteContent() {
+    final toRoute = progress?.distanceFromRoute ?? 0;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 60,
+              height: 60,
+              decoration: const BoxDecoration(color: NaturalPalette.route, shape: BoxShape.circle),
+              child: const Icon(Icons.signpost, color: Colors.white, size: 32),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Head to the trail',
+                      style: TextStyle(
+                          fontSize: 17, fontWeight: FontWeight.w700, color: NaturalPalette.ink)),
+                  Text('About ${_distanceText(toRoute)} to reach your route',
+                      style: const TextStyle(fontSize: 14, color: NaturalPalette.ink)),
+                  const Text('Straight-line estimate — follow the map, not turn-by-turn',
+                      style: TextStyle(fontSize: 11, color: NaturalPalette.inkMuted)),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 11),
+          child: Divider(height: 1, color: NaturalPalette.hairline),
+        ),
+        Row(
+          children: [
+            const Expanded(
+              child: Text('Turn-by-turn starts once you reach the trail',
+                  style: TextStyle(fontSize: 12, color: NaturalPalette.inkMuted)),
+            ),
+            GestureDetector(
+              onTap: onEnd,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                decoration:
+                    BoxDecoration(color: NaturalPalette.route, borderRadius: BorderRadius.circular(20)),
+                child: const Text('End',
+                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14)),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _activeNavigationContent() {
+    final upcoming = progress?.upcomingInstruction ??
+        (route.turnInstructions.isNotEmpty ? route.turnInstructions.first : null);
+    final isArrived = progress?.isArrived ?? false;
+    final remaining = progress?.remainingMeters ?? route.lengthMeters;
+    final distanceToNext = progress?.distanceToNext ??
+        (route.turnInstructions.isNotEmpty ? route.turnInstructions.first.legMeters : 0);
+    final offRoute = (progress?.distanceFromRoute ?? 0) > 30;
+
+    return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -165,8 +239,7 @@ class NavigationBanner extends StatelessWidget {
             ),
           ],
         ],
-      ),
-    );
+      );
   }
 
   IconData _iconFor(TurnKind? kind) {
