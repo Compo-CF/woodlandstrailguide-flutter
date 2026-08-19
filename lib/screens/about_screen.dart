@@ -3,9 +3,11 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../models/achievement.dart';
 import '../services/iap_store.dart';
 import '../stores/user_data_store.dart';
 import '../theme/natural_palette.dart';
+import '../widgets/achievements_sheet.dart';
 import '../widgets/tip_jar_sheet.dart';
 
 class AboutScreen extends StatefulWidget {
@@ -56,6 +58,16 @@ class _AboutScreenState extends State<AboutScreen> {
                 _statDivider(),
                 _statCell('${stats.currentStreakDays}', 'day streak'),
               ],
+            ),
+            const SizedBox(height: 16),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.emoji_events_outlined, color: NaturalPalette.route),
+              title: const Text('Achievements'),
+              subtitle: Text(
+                  '${userData.celebratedAchievementIds.length} of ${Achievement.all.length} earned'),
+              trailing: const Icon(Icons.chevron_right, size: 18),
+              onTap: () => AchievementsSheet.show(context),
             ),
             const SizedBox(height: 24),
             const _SectionTitle('Recent walks'),

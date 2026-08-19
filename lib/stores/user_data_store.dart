@@ -9,6 +9,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/achievement.dart';
 import '../models/travel_mode.dart';
 import '../models/trip_log_entry.dart';
 
@@ -21,8 +22,14 @@ class UserDataStore extends ChangeNotifier {
   static const _routesCompletedKey = 'routesCompleted.v1';
   static const _travelModeKey = 'travelMode.v1';
   static const _preferPavedKey = 'preferPavedRoutes.v1';
+  static const _celebratedAchievementsKey = 'celebratedAchievementIDs.v1';
 
   SharedPreferences? _prefs;
+
+  /// Permanent record of which achievements have ever been earned.
+  /// Unlike the live stats that back them (streak in particular can
+  /// drop back to zero), once earned an achievement stays unlocked.
+  Set<String> celebratedAchievementIds = {};
 
   /// Walk/jog/run/bike — changes the pace assumption used for every
   /// ETA/duration display. Doesn't change the routed path itself.
@@ -54,6 +61,8 @@ class UserDataStore extends ChangeNotifier {
     routesCompleted = _prefs!.getInt(_routesCompletedKey) ?? 0;
     travelMode = TravelMode.fromName(_prefs!.getString(_travelModeKey));
     preferPavedRoutes = _prefs!.getBool(_preferPavedKey) ?? false;
+    celebratedAchievementIds =
+        (_prefs!.getStringList(_celebratedAchievementsKey) ?? const []).toSet();
     final raw = _prefs!.getString(_tripLogKey);
     if (raw != null) {
       try {
@@ -107,6 +116,31 @@ class UserDataStore extends ChangeNotifier {
     }
     await _prefs?.setStringList(_favoritesKey, favoriteWayIDs.toList());
     notifyListeners();
+    // Doesn't affect the "supporter" badge either way — that's checked
+    // with real tip status at the tip-purchase call site.
+    await checkForNewAchievements(hasTipped: false);
+  }
+
+  // MARK: - Achievements
+
+  /// Diffs the achievements earnable from current stats against what's
+  /// already been celebrated, persists any new ones, and returns them
+  /// (so the caller can show a toast). Safe to call often — e.g. after
+  /// every favorite toggle or tip — since it's a no-op when nothing new
+  /// was earned.
+  Future<List<Achievement>> checkForNewAchievements({required bool hasTipped}) async {
+    final earned = Achievement.unlockedIds(
+      stats: tripStats,
+      favoritesCount: favoriteWayIDs.length,
+      hasTipped: hasTipped,
+    );
+    final fresh = earned.difference(celebratedAchievementIds);
+    if (fresh.isEmpty) return const [];
+    celebratedAchievementIds = celebratedAchievementIds.union(fresh);
+    await _prefs?.setStringList(
+        _celebratedAchievementsKey, celebratedAchievementIds.toList());
+    notifyListeners();
+    return Achievement.all.where((a) => fresh.contains(a.id)).toList();
   }
 
   // MARK: - Trip log

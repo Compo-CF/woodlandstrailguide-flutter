@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
+import '../models/achievement.dart';
 import '../models/poi.dart';
 import '../models/trail_graph.dart';
 import '../models/travel_mode.dart';
@@ -21,6 +22,7 @@ import '../stores/trail_store.dart';
 import '../stores/user_data_store.dart';
 import '../stores/weather_store.dart';
 import '../theme/natural_palette.dart';
+import '../widgets/achievements_sheet.dart';
 import '../widgets/admob_banner.dart';
 import '../widgets/loop_builder_sheet.dart';
 import '../widgets/navigation_banner.dart';
@@ -74,6 +76,10 @@ class _MapScreenState extends State<MapScreen> {
   /// Wall-clock start of the active navigation session — used to compute
   /// a real walk duration for the trip log on arrival.
   DateTime? _navigationStartedAt;
+
+  /// Set right after a walk completes if it earned any new achievements.
+  /// Drives a brief celebratory toast (dismisses itself after a few sec).
+  Achievement? _toastAchievement;
 
   /// Best-effort last-known position, used only to show "X mi from you"
   /// in the POI detail sheet. Not authoritative for navigation math —
@@ -363,6 +369,13 @@ class _MapScreenState extends State<MapScreen> {
                     right: 0,
                     child: Center(child: const RerouteToast()),
                   ),
+                if (_toastAchievement != null)
+                  Positioned(
+                    top: 100,
+                    left: 0,
+                    right: 0,
+                    child: Center(child: AchievementToast(achievement: _toastAchievement!)),
+                  ),
               ],
             );
   }
@@ -405,6 +418,14 @@ class _MapScreenState extends State<MapScreen> {
     ).listen(_onPositionUpdate);
   }
 
+  Future<void> _checkAndShowAchievements(UserDataStore userData, bool hasTipped) async {
+    final newlyEarned = await userData.checkForNewAchievements(hasTipped: hasTipped);
+    if (newlyEarned.isEmpty || !mounted) return;
+    setState(() => _toastAchievement = newlyEarned.first);
+    await Future.delayed(const Duration(seconds: 3));
+    if (mounted) setState(() => _toastAchievement = null);
+  }
+
   Future<void> _endNavigation(RoutingState routing) async {
     await _positionSub?.cancel();
     _positionSub = null;
@@ -443,6 +464,8 @@ class _MapScreenState extends State<MapScreen> {
         travelMode: userData.travelMode,
       );
       _navigationStartedAt = null;
+      final hasTipped = context.read<IAPStore>().tipCount > 0;
+      unawaited(_checkAndShowAchievements(userData, hasTipped));
     }
 
     _controller?.animateCamera(

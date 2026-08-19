@@ -3,6 +3,7 @@ import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:provider/provider.dart';
 
 import '../services/iap_store.dart';
+import '../stores/user_data_store.dart';
 import '../theme/natural_palette.dart';
 
 /// Three-tier tip picker. Direct port of iOS TipJarSheet — tapping a
@@ -102,6 +103,11 @@ class _TipJarSheetState extends State<TipJarSheet> {
                 setState(() => _isProcessing = true);
                 final ok = await iap.purchase(product);
                 if (mounted) setState(() => _isProcessing = false);
+                if (ok && context.mounted) {
+                  await context
+                      .read<UserDataStore>()
+                      .checkForNewAchievements(hasTipped: true);
+                }
                 if (ok && context.mounted) {
                   showDialog<void>(
                     context: context,
