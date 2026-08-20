@@ -23,15 +23,17 @@
             android:name="com.google.android.geo.API_KEY"
             android:value="AIzaSyBeonDXHhgPNczFoR-ilpzTl2ZvzOecKE0"/>
 
-        <!-- AdMob App ID — this is GOOGLE'S OFFICIAL TEST APP ID, safe to
-             ship during development (shows clearly-labeled test ads only,
-             never flagged by Google). Replace with the real Android App ID
-             once registered in AdMob — the existing iOS App ID does NOT
-             carry over; Android needs its own app entry in the same
-             publisher account. See README.md "AdMob setup". -->
+        <!-- Real AdMob App ID, registered 2026-08-13 as its own Android
+             app entry under the shared pub-1927040492403163 account (the
+             iOS App ID does NOT carry over — same account, separate app
+             registration). The banner ad UNIT id (a different value, used
+             in admob_banner.dart) still switches to Google's test unit in
+             debug builds — see that file. This App ID itself is fine to
+             ship in both debug and release; only ad-serving needs the
+             debug/release split. -->
         <meta-data
             android:name="com.google.android.gms.ads.APPLICATION_ID"
-            android:value="ca-app-pub-3940256099942544~3347511713"/>
+            android:value="ca-app-pub-1927040492403163~5854190344"/>
 
         <activity
             android:name=".MainActivity"
