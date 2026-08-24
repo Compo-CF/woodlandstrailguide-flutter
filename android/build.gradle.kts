@@ -23,6 +23,22 @@ allprojects {
             }
         }
     }
+
+    // Force every plugin's own Android library module onto the same
+    // compileSdk as :app. Plugin AARs (geocoding_android is the one that
+    // surfaced this) ship their own build.gradle reading
+    // flutter.compileSdkVersion directly — which resolves to a stale,
+    // much-lower value on at least one build machine and trips AGP's
+    // cross-module compileSdk consistency check, even though :app's own
+    // build.gradle.kts already pins a newer literal. :app itself doesn't
+    // need this — its compileSdk is already an explicit literal — but
+    // this covers every other subproject uniformly instead of chasing
+    // one plugin at a time.
+    pluginManager.withPlugin("com.android.library") {
+        extensions.configure<com.android.build.gradle.LibraryExtension> {
+            compileSdk = 36
+        }
+    }
 }
 
 val newBuildDir: Directory =
