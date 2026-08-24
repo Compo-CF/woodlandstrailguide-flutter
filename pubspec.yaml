@@ -34,7 +34,14 @@ dependencies:
   geolocator: ^13.0.1
 
   # Forward geocoding for the route planner's "Address" starting point.
-  geocoding: ^3.0.0
+  # Must stay >=5.x: geocoding 3.x pulled geocoding_android 3.3.1, whose
+  # own build.gradle HARDCODES `compileSdk 33`. That can't be overridden
+  # from our side (AGP reads it during that script's own evaluation —
+  # withPlugin is too early, afterEvaluate too late), and it conflicts
+  # with exifinterface 1.4.x (via image_picker_android), which requires
+  # every module on the classpath to compile against 34+. Hard build
+  # failure. 5.x compiles against a current SDK and resolves it.
+  geocoding: ^5.0.0
 
   # Keeps the screen on during turn-by-turn navigation — Android
   # equivalent of iOS's UIApplication.isIdleTimerDisabled.

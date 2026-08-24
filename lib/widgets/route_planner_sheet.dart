@@ -366,7 +366,22 @@ class _RoutePlannerSheetState extends State<RoutePlannerSheet> {
       _addressLon = null;
     });
     try {
-      final results = await geocoding.locationFromAddress(text);
+      // geocoding 5.x is class-based (the old top-level
+      // locationFromAddress() function is gone). isPresent() is an
+      // Android-only reality check — some devices ship no geocoder
+      // backend at all, and without this those users would get a
+      // misleading "couldn't find that address" for every input.
+      final geocoder = geocoding.Geocoding();
+      if (!await geocoder.isPresent()) {
+        if (!mounted) return;
+        setState(() {
+          _isGeocoding = false;
+          _addressError = 'Address lookup unavailable on this device — '
+              'tap the map to pick a starting point instead.';
+        });
+        return;
+      }
+      final results = await geocoder.locationFromAddress(text);
       if (!mounted) return;
       if (results.isNotEmpty) {
         setState(() {

@@ -24,29 +24,14 @@ allprojects {
         }
     }
 
-    // Force every plugin's own Android library module onto the same
-    // compileSdk as :app. Plugin AARs (geocoding_android is the one that
-    // surfaced this) ship their own build.gradle reading
-    // flutter.compileSdkVersion directly — which resolves to a stale,
-    // much-lower value on at least one build machine and trips AGP's
-    // cross-module compileSdk consistency check, even though :app's own
-    // build.gradle.kts already pins a newer literal. :app itself doesn't
-    // need this — its compileSdk is already an explicit literal.
-    //
-    // Must be afterEvaluate, not withPlugin like the block above: a
-    // withPlugin callback fires the instant the plugin is applied, which
-    // is BEFORE the subproject's own build.gradle reaches its own
-    // `compileSdk = flutter.compileSdkVersion` line further down that
-    // same script — so that later assignment was winning and clobbering
-    // this override. afterEvaluate runs once the whole subproject script
-    // (including that later line) has already finished.
-    pluginManager.withPlugin("com.android.library") {
-        afterEvaluate {
-            extensions.configure<com.android.build.gradle.LibraryExtension> {
-                compileSdk = 36
-            }
-        }
-    }
+    // NOTE: do NOT try to override a plugin subproject's compileSdk from
+    // here. A plugin whose own build.gradle hardcodes `compileSdk N`
+    // (geocoding_android 3.3.1 did, with N=33) cannot be overridden from
+    // the root: withPlugin fires before that line runs, and afterEvaluate
+    // is rejected outright ("It is too late to set compileSdk. It has
+    // already been read to configure this project."). The fix for that
+    // class of problem is to upgrade the offending package — see the
+    // geocoding constraint in pubspec.yaml.
 }
 
 val newBuildDir: Directory =

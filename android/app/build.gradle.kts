@@ -19,15 +19,7 @@ if (keystorePropertiesFile.exists()) {
 
 android {
     namespace = "com.compofelice.woodlandstrailguide"
-    // Pinned above Flutter's own default (which resolved to 33 on at
-    // least one build machine) — adding the geocoding package pulled in
-    // a newer AndroidX dependency chain (exifinterface 1.4.1, then
-    // navigationevent-android 1.0.2) that kept demanding one API level
-    // higher each time 34 and then 35 were tried. Jumped straight to the
-    // current latest (36) rather than chasing it one bump at a time.
-    // Bumping targetSdk to match so the two stay consistent; minSdk is
-    // untouched.
-    compileSdk = 36
+    compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -38,7 +30,7 @@ android {
     defaultConfig {
         applicationId = "com.compofelice.woodlandstrailguide"
         minSdk = flutter.minSdkVersion
-        targetSdk = 36
+        targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
