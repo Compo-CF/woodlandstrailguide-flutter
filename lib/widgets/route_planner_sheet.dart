@@ -1,14 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:geocoding/geocoding.dart' as geocoding;
 
 import '../models/travel_mode.dart';
 import '../services/router.dart';
 import '../theme/natural_palette.dart';
 
 /// Sheet for generating a route to hit a target distance or time, with a
-/// choice of activity (walk/jog/run — drives the pace used for time-to-
-/// distance conversion), path type (any/paved/natural), and shape (loop
-/// vs out-and-back). Direct port of iOS RoutePlannerSheet — replaces the
-/// old fixed-distance-only LoopBuilderSheet.
+/// choice of starting point (current location / address / tap on map),
+/// activity (walk/jog/run — drives the pace used for time-to-distance
+/// conversion), path type (any/paved/natural), and shape (loop vs
+/// out-and-back). Direct port of iOS RoutePlannerSheet.
 class RoutePlannerSheet extends StatefulWidget {
   /// Fired with (startNodeIndex, farNodeIndex, plan). MapScreen plugs
   /// both into RoutingState.applyPlan, which knows how to build the
@@ -16,21 +17,43 @@ class RoutePlannerSheet extends StatefulWidget {
   /// future recompute.
   final void Function(int start, int far, RoutePlan plan) onGenerate;
   final int? Function() nearestNodeToUser;
+  final int? Function(double lat, double lon) nearestNodeAt;
   final int? Function(int start, double targetMeters, SurfacePreference pref) farthestNode;
+  /// Fired when the user taps "Choose point on map" (or "Change"). The
+  /// sheet is already closed by the time this fires (see show()) — MapScreen
+  /// drops the map into a one-shot "tap to set start" mode and reopens the
+  /// sheet with the draft passed back as initialDraft once a tap lands.
+  final void Function(RouteDraft draft) onRequestMapTap;
+  /// True if we have a live location fix right now — drives whether
+  /// "Current Location" shows a warning. MapScreen no longer needs a fix
+  /// just to open this sheet.
+  final bool hasLiveLocation;
+  /// Restores every selection (including a previously-picked starting
+  /// point) when the sheet reopens after "Tap on Map". Null for a fresh,
+  /// from-scratch open.
+  final RouteDraft? initialDraft;
 
   const RoutePlannerSheet({
     super.key,
     required this.onGenerate,
     required this.nearestNodeToUser,
+    required this.nearestNodeAt,
     required this.farthestNode,
+    required this.onRequestMapTap,
+    required this.hasLiveLocation,
+    this.initialDraft,
   });
 
   static Future<void> show(
     BuildContext context, {
     required void Function(int start, int far, RoutePlan plan) onGenerate,
     required int? Function() nearestNodeToUser,
+    required int? Function(double lat, double lon) nearestNodeAt,
     required int? Function(int start, double targetMeters, SurfacePreference pref)
         farthestNode,
+    required void Function(RouteDraft draft) onRequestMapTap,
+    required bool hasLiveLocation,
+    RouteDraft? initialDraft,
   }) {
     return showModalBottomSheet<void>(
       context: context,
@@ -42,7 +65,11 @@ class RoutePlannerSheet extends StatefulWidget {
       builder: (_) => RoutePlannerSheet(
         onGenerate: onGenerate,
         nearestNodeToUser: nearestNodeToUser,
+        nearestNodeAt: nearestNodeAt,
         farthestNode: farthestNode,
+        onRequestMapTap: onRequestMapTap,
+        hasLiveLocation: hasLiveLocation,
+        initialDraft: initialDraft,
       ),
     );
   }
@@ -51,16 +78,24 @@ class RoutePlannerSheet extends StatefulWidget {
   State<RoutePlannerSheet> createState() => _RoutePlannerSheetState();
 }
 
-enum _TargetKind { distance, time }
-
 class _RoutePlannerSheetState extends State<RoutePlannerSheet> {
-  _TargetKind _targetKind = _TargetKind.distance;
-  double _selectedMiles = 2;
-  double _selectedMinutes = 30;
-  TravelMode _activity = TravelMode.walk;
-  SurfacePreference _surfacePreference = SurfacePreference.any;
-  PlannedRouteShape _shape = PlannedRouteShape.loop;
+  late bool _targetIsDistance;
+  late double _selectedMiles;
+  late double _selectedMinutes;
+  late TravelMode _activity;
+  late SurfacePreference _surfacePreference;
+  late PlannedRouteShape _shape;
+  late RouteStartMode _startMode;
+  late final TextEditingController _addressController;
+  double? _addressLat;
+  double? _addressLon;
+  String? _addressLabel;
+  String? _addressError;
+  bool _isGeocoding = false;
+  double? _tapLat;
+  double? _tapLon;
   bool _couldNotGenerate = false;
+  bool _missingStartPoint = false;
 
   static const _mileOptions = <double>[1, 2, 3, 5, 6.2, 10];
   static const _minuteOptions = <double>[15, 20, 30, 45, 60, 90];
@@ -68,25 +103,44 @@ class _RoutePlannerSheetState extends State<RoutePlannerSheet> {
   // walk/jog/run" picker -- left out deliberately.
   static const _activities = <TravelMode>[TravelMode.walk, TravelMode.jog, TravelMode.run];
 
+  @override
+  void initState() {
+    super.initState();
+    final d = widget.initialDraft;
+    _targetIsDistance = d?.targetIsDistance ?? true;
+    _selectedMiles = d?.selectedMiles ?? 2;
+    _selectedMinutes = d?.selectedMinutes ?? 30;
+    _activity = d?.activity ?? TravelMode.walk;
+    _surfacePreference = d?.surfacePreference ?? SurfacePreference.any;
+    _shape = d?.shape ?? PlannedRouteShape.loop;
+    _startMode = d?.startMode ?? RouteStartMode.currentLocation;
+    _addressController = TextEditingController(text: d?.addressText ?? '');
+    _addressLat = d?.addressLat;
+    _addressLon = d?.addressLon;
+    _addressLabel = d?.addressLabel;
+    _tapLat = d?.tapLat;
+    _tapLon = d?.tapLon;
+  }
+
+  @override
+  void dispose() {
+    _addressController.dispose();
+    super.dispose();
+  }
+
   double get _targetMeters {
-    switch (_targetKind) {
-      case _TargetKind.distance:
-        return _selectedMiles * 1609.344;
-      case _TargetKind.time:
-        return _selectedMinutes / 60.0 * _activity.paceMph * 1609.344;
-    }
+    if (_targetIsDistance) return _selectedMiles * 1609.344;
+    return _selectedMinutes / 60.0 * _activity.paceMph * 1609.344;
   }
 
   String get _derivedCaption {
     final pace = _activity.paceMph.toStringAsFixed(1);
-    switch (_targetKind) {
-      case _TargetKind.distance:
-        final mins = (_selectedMiles / _activity.paceMph * 60).round();
-        return '≈ $mins min at a ${_activity.label.toLowerCase()} pace ($pace mph)';
-      case _TargetKind.time:
-        final miles = (_selectedMinutes / 60.0 * _activity.paceMph).toStringAsFixed(1);
-        return '≈ $miles mi at a ${_activity.label.toLowerCase()} pace ($pace mph)';
+    if (_targetIsDistance) {
+      final mins = (_selectedMiles / _activity.paceMph * 60).round();
+      return '≈ $mins min at a ${_activity.label.toLowerCase()} pace ($pace mph)';
     }
+    final miles = (_selectedMinutes / 60.0 * _activity.paceMph).toStringAsFixed(1);
+    return '≈ $miles mi at a ${_activity.label.toLowerCase()} pace ($pace mph)';
   }
 
   @override
@@ -106,20 +160,27 @@ class _RoutePlannerSheetState extends State<RoutePlannerSheet> {
                     fontSize: 20, fontWeight: FontWeight.w700, color: NaturalPalette.ink)),
             const SizedBox(height: 6),
             const Text(
-              "Set a target and we'll build a route to match, starting from where you are.",
+              "Set a target and we'll build a route to match.",
               textAlign: TextAlign.center,
               style: TextStyle(color: NaturalPalette.inkMuted, fontSize: 13),
             ),
             const SizedBox(height: 18),
+            _section('Starting point', [
+              _chipRow<RouteStartMode>(RouteStartMode.values, _startMode, (m) => m.label,
+                  (m) => setState(() => _startMode = m)),
+              const SizedBox(height: 8),
+              _startPointPanel(),
+            ]),
+            const SizedBox(height: 16),
             _section('Target', [
-              _chipRow<_TargetKind>(
-                [_TargetKind.distance, _TargetKind.time],
-                _targetKind,
-                (k) => k == _TargetKind.distance ? 'Distance' : 'Time',
-                (k) => setState(() => _targetKind = k),
+              _chipRow<bool>(
+                [true, false],
+                _targetIsDistance,
+                (v) => v ? 'Distance' : 'Time',
+                (v) => setState(() => _targetIsDistance = v),
               ),
               const SizedBox(height: 8),
-              if (_targetKind == _TargetKind.distance)
+              if (_targetIsDistance)
                 _chipRow<double>(_mileOptions, _selectedMiles, _formatMiles,
                     (m) => setState(() => _selectedMiles = m))
               else
@@ -147,10 +208,18 @@ class _RoutePlannerSheetState extends State<RoutePlannerSheet> {
               Text(_shape.blurb,
                   style: const TextStyle(fontSize: 12, color: NaturalPalette.inkMuted)),
             ]),
-            if (_couldNotGenerate) ...[
+            if (_missingStartPoint) ...[
               const SizedBox(height: 14),
               const Text(
-                "Couldn't find a route that long near you — try a shorter target.",
+                'Choose a starting point first.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    color: NaturalPalette.route, fontWeight: FontWeight.w600, fontSize: 13),
+              ),
+            ] else if (_couldNotGenerate) ...[
+              const SizedBox(height: 14),
+              const Text(
+                "Couldn't find a route that long near there — try a shorter target.",
                 textAlign: TextAlign.center,
                 style: TextStyle(
                     color: NaturalPalette.route, fontWeight: FontWeight.w600, fontSize: 13),
@@ -177,11 +246,173 @@ class _RoutePlannerSheetState extends State<RoutePlannerSheet> {
     );
   }
 
+  Widget _startPointPanel() {
+    switch (_startMode) {
+      case RouteStartMode.currentLocation:
+        if (widget.hasLiveLocation) return const SizedBox.shrink();
+        return const Text(
+          'Location unavailable — try an address or tap the map instead.',
+          style: TextStyle(fontSize: 12, color: NaturalPalette.route),
+        );
+      case RouteStartMode.address:
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _addressController,
+                    decoration: const InputDecoration(
+                      hintText: 'Address or place',
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      border: OutlineInputBorder(),
+                    ),
+                    textInputAction: TextInputAction.search,
+                    onSubmitted: (_) => _geocodeAddress(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  onPressed: _isGeocoding || _addressController.text.trim().isEmpty
+                      ? null
+                      : _geocodeAddress,
+                  style: FilledButton.styleFrom(backgroundColor: NaturalPalette.forest),
+                  child: _isGeocoding
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        )
+                      : const Text('Find'),
+                ),
+              ],
+            ),
+            if (_addressLabel != null && _addressLat != null) ...[
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  const Icon(Icons.check_circle, size: 14, color: NaturalPalette.forest),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(_addressLabel!,
+                        style: const TextStyle(fontSize: 12, color: NaturalPalette.forest)),
+                  ),
+                ],
+              ),
+            ] else if (_addressError != null) ...[
+              const SizedBox(height: 6),
+              Text(_addressError!,
+                  style: const TextStyle(fontSize: 12, color: NaturalPalette.route)),
+            ],
+          ],
+        );
+      case RouteStartMode.tapOnMap:
+        if (_tapLat != null && _tapLon != null) {
+          return Row(
+            children: [
+              const Icon(Icons.location_pin, size: 16, color: NaturalPalette.forest),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  '${_tapLat!.toStringAsFixed(4)}, ${_tapLon!.toStringAsFixed(4)}',
+                  style: const TextStyle(fontSize: 12, color: NaturalPalette.forest),
+                ),
+              ),
+              TextButton(
+                onPressed: _requestMapTap,
+                child: const Text('Change',
+                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+              ),
+            ],
+          );
+        }
+        return TextButton.icon(
+          onPressed: _requestMapTap,
+          icon: const Icon(Icons.touch_app, size: 18, color: NaturalPalette.forest),
+          label: const Text('Choose point on map',
+              style: TextStyle(fontWeight: FontWeight.w600, color: NaturalPalette.forest)),
+        );
+    }
+  }
+
+  void _requestMapTap() {
+    final draft = RouteDraft(
+      selectedMiles: _selectedMiles,
+      selectedMinutes: _selectedMinutes,
+      targetIsDistance: _targetIsDistance,
+      activity: _activity,
+      surfacePreference: _surfacePreference,
+      shape: _shape,
+      startMode: RouteStartMode.tapOnMap,
+      addressText: _addressController.text,
+      addressLat: _addressLat,
+      addressLon: _addressLon,
+      addressLabel: _addressLabel,
+      // tapLat/tapLon deliberately omitted (null) — requesting a fresh tap.
+    );
+    Navigator.of(context).pop();
+    widget.onRequestMapTap(draft);
+  }
+
+  Future<void> _geocodeAddress() async {
+    final text = _addressController.text.trim();
+    if (text.isEmpty) return;
+    setState(() {
+      _isGeocoding = true;
+      _addressError = null;
+      _addressLat = null;
+      _addressLon = null;
+    });
+    try {
+      final results = await geocoding.locationFromAddress(text);
+      if (!mounted) return;
+      if (results.isNotEmpty) {
+        setState(() {
+          _isGeocoding = false;
+          _addressLat = results.first.latitude;
+          _addressLon = results.first.longitude;
+          _addressLabel = text;
+        });
+      } else {
+        setState(() {
+          _isGeocoding = false;
+          _addressError = "Couldn't find that address.";
+        });
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _isGeocoding = false;
+        _addressError = "Couldn't find that address.";
+      });
+    }
+  }
+
   void _generate() {
-    setState(() => _couldNotGenerate = false);
-    final start = widget.nearestNodeToUser();
+    setState(() {
+      _couldNotGenerate = false;
+      _missingStartPoint = false;
+    });
+    int? start;
+    switch (_startMode) {
+      case RouteStartMode.currentLocation:
+        start = widget.nearestNodeToUser();
+        break;
+      case RouteStartMode.address:
+        start = (_addressLat != null && _addressLon != null)
+            ? widget.nearestNodeAt(_addressLat!, _addressLon!)
+            : null;
+        break;
+      case RouteStartMode.tapOnMap:
+        start = (_tapLat != null && _tapLon != null)
+            ? widget.nearestNodeAt(_tapLat!, _tapLon!)
+            : null;
+        break;
+    }
     if (start == null || _targetMeters <= 0) {
-      setState(() => _couldNotGenerate = true);
+      setState(() => _missingStartPoint = true);
       return;
     }
     final far = widget.farthestNode(start, _targetMeters / 2, _surfacePreference);

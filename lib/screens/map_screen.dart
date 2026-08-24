@@ -95,6 +95,15 @@ class _MapScreenState extends State<MapScreen> {
   /// that always reads a fresh Geolocator fix.
   Position? _lastKnownPosition;
 
+  /// True right after the route planner asks the user to tap a starting
+  /// point on the map. The sheet is already closed for the duration; a
+  /// banner with a Cancel button takes its place, and the next map tap
+  /// resolves _plannerDraft's tap coordinate and reopens the sheet.
+  bool _awaitingPlannerTap = false;
+  /// Stashed RoutePlannerSheet selections while _awaitingPlannerTap is
+  /// true — restored as the sheet's initialDraft when it reopens.
+  RouteDraft? _plannerDraft;
+
   /// True once it's safe to populate the heavy static overlays (trail
   /// polylines + POI markers). False for the very first frame after the
   /// graph loads, so GoogleMap can paint its base tiles + UI chrome
@@ -318,6 +327,43 @@ class _MapScreenState extends State<MapScreen> {
                     ],
                   ),
                 ),
+                if (_awaitingPlannerTap)
+                  Positioned(
+                    top: 48,
+                    left: 16,
+                    right: 16,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      decoration: BoxDecoration(
+                        color: NaturalPalette.forest,
+                        borderRadius: BorderRadius.circular(14),
+                        boxShadow: [
+                          BoxShadow(color: Colors.black.withValues(alpha: 0.2), blurRadius: 8, offset: const Offset(0, 3)),
+                        ],
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.touch_app, color: Colors.white, size: 18),
+                          const SizedBox(width: 10),
+                          const Expanded(
+                            child: Text(
+                              'Tap the map to set your starting point',
+                              style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13),
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: () {
+                              setState(() => _awaitingPlannerTap = false);
+                              _reopenRoutePlanner(graph, routing, userData);
+                            },
+                            style: TextButton.styleFrom(foregroundColor: Colors.white, padding: EdgeInsets.zero),
+                            child: const Text('Cancel',
+                                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 if (!routing.routingMode)
                   Positioned(
                     bottom: 20,
@@ -551,6 +597,18 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   void _onMapTap(LatLng pos, TrailGraph graph, RoutingState routing) {
+    if (_awaitingPlannerTap) {
+      setState(() {
+        _awaitingPlannerTap = false;
+        _plannerDraft = (_plannerDraft ?? const RouteDraft()).copyWith(
+          startMode: RouteStartMode.tapOnMap,
+          tapLat: pos.latitude,
+          tapLon: pos.longitude,
+        );
+      });
+      _reopenRoutePlanner(graph, routing, context.read<UserDataStore>());
+      return;
+    }
     if (!routing.routingMode) return;
     final router = TrailRouter(graph);
     final node = router.nearestNode(pos.latitude, pos.longitude);
@@ -638,33 +696,67 @@ class _MapScreenState extends State<MapScreen> {
     } catch (_) {}
   }
 
-  /// Opens the route planner (distance/time target, activity, path
-  /// type, loop vs out-and-back), snapshotting the user's current
-  /// location once up front so the sheet's node lookups can stay
-  /// synchronous. Direct port of iOS's plannerButton flow.
+  /// Opens the route planner (starting point, distance/time target,
+  /// activity, path type, loop vs out-and-back). Tries for a fresh
+  /// location fix up front (so "Current Location" has one ready) but no
+  /// longer blocks the sheet on it — Address and Tap on Map starting
+  /// points work with no fix at all. Direct port of iOS's plannerButton
+  /// flow, extended for the starting-point picker.
   Future<void> _openRoutePlanner(
       TrailGraph graph, RoutingState routing, UserDataStore userData) async {
-    if (!_hasLocationPermission) {
-      await _initLocation();
-      if (!_hasLocationPermission) return;
+    if (!_hasLocationPermission) await _initLocation();
+    if (!mounted) return;
+    Position? pos = _lastKnownPosition;
+    if (_hasLocationPermission) {
+      try {
+        pos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high)
+            .timeout(const Duration(seconds: 5));
+      } catch (_) {
+        // Fall back to _lastKnownPosition (or null) — Address/Tap on Map
+        // still work with no fix at all.
+      }
     }
     if (!mounted) return;
-    Position pos;
-    try {
-      pos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
-    } catch (_) {
-      return;
-    }
-    if (!mounted) return;
+    _lastKnownPosition = pos ?? _lastKnownPosition;
+    _plannerDraft = null;
+    await _showRoutePlannerSheet(graph, routing, userData, hasLiveLocation: pos != null);
+  }
+
+  /// Reopens the sheet after a "Tap on Map" pick lands — _plannerDraft
+  /// already carries the resolved tap coordinate as this fires.
+  Future<void> _reopenRoutePlanner(
+      TrailGraph graph, RoutingState routing, UserDataStore userData) async {
+    await _showRoutePlannerSheet(graph, routing, userData,
+        hasLiveLocation: _lastKnownPosition != null);
+  }
+
+  Future<void> _showRoutePlannerSheet(
+    TrailGraph graph,
+    RoutingState routing,
+    UserDataStore userData, {
+    required bool hasLiveLocation,
+  }) async {
     final router = TrailRouter(graph);
+    final pos = _lastKnownPosition;
     await RoutePlannerSheet.show(
       context,
-      nearestNodeToUser: () => router.nearestNode(pos.latitude, pos.longitude),
+      hasLiveLocation: hasLiveLocation,
+      initialDraft: _plannerDraft,
+      nearestNodeToUser: () =>
+          pos == null ? null : router.nearestNode(pos.latitude, pos.longitude),
+      nearestNodeAt: (lat, lon) => router.nearestNode(lat, lon),
       farthestNode: (start, targetMeters, pref) =>
           router.farthestNode(start, targetMeters, surfacePreference: pref),
       onGenerate: (start, far, plan) {
         routing.applyPlan(start, far, plan, graph);
         userData.setTravelMode(plan.activity);
+        _plannerDraft = null;
+      },
+      onRequestMapTap: (draft) {
+        setState(() {
+          _plannerDraft = draft;
+          _awaitingPlannerTap = true;
+        });
       },
     );
   }

@@ -73,6 +73,95 @@ class RoutePlan {
   });
 }
 
+/// Where a planner-generated route should start from — the user's live
+/// location, a geocoded address, or a point they tapped on the map.
+/// Direct port of iOS RouteStartMode.
+enum RouteStartMode {
+  currentLocation,
+  address,
+  tapOnMap;
+
+  String get label {
+    switch (this) {
+      case RouteStartMode.currentLocation:
+        return 'Current Location';
+      case RouteStartMode.address:
+        return 'Address';
+      case RouteStartMode.tapOnMap:
+        return 'Tap on Map';
+    }
+  }
+}
+
+/// A snapshot of every RoutePlannerSheet selection, used to restore the
+/// sheet's state when it's dismissed to let the user tap a starting point
+/// on the map, then reopened once that tap lands. Plain data — no
+/// behavior — so it's cheap to stash in MapScreen between the dismiss and
+/// reopen. Direct port of iOS RouteDraft.
+class RouteDraft {
+  final double selectedMiles;
+  final double selectedMinutes;
+  final bool targetIsDistance;
+  final TravelMode activity;
+  final SurfacePreference surfacePreference;
+  final PlannedRouteShape shape;
+  final RouteStartMode startMode;
+  final String addressText;
+  final double? addressLat;
+  final double? addressLon;
+  final String? addressLabel;
+  final double? tapLat;
+  final double? tapLon;
+
+  const RouteDraft({
+    this.selectedMiles = 2,
+    this.selectedMinutes = 30,
+    this.targetIsDistance = true,
+    this.activity = TravelMode.walk,
+    this.surfacePreference = SurfacePreference.any,
+    this.shape = PlannedRouteShape.loop,
+    this.startMode = RouteStartMode.currentLocation,
+    this.addressText = '',
+    this.addressLat,
+    this.addressLon,
+    this.addressLabel,
+    this.tapLat,
+    this.tapLon,
+  });
+
+  RouteDraft copyWith({
+    double? selectedMiles,
+    double? selectedMinutes,
+    bool? targetIsDistance,
+    TravelMode? activity,
+    SurfacePreference? surfacePreference,
+    PlannedRouteShape? shape,
+    RouteStartMode? startMode,
+    String? addressText,
+    double? addressLat,
+    double? addressLon,
+    String? addressLabel,
+    double? tapLat,
+    double? tapLon,
+  }) {
+    return RouteDraft(
+      selectedMiles: selectedMiles ?? this.selectedMiles,
+      selectedMinutes: selectedMinutes ?? this.selectedMinutes,
+      targetIsDistance: targetIsDistance ?? this.targetIsDistance,
+      activity: activity ?? this.activity,
+      surfacePreference: surfacePreference ?? this.surfacePreference,
+      shape: shape ?? this.shape,
+      startMode: startMode ?? this.startMode,
+      addressText: addressText ?? this.addressText,
+      addressLat: addressLat ?? this.addressLat,
+      addressLon: addressLon ?? this.addressLon,
+      addressLabel: addressLabel ?? this.addressLabel,
+      tapLat: tapLat ?? this.tapLat,
+      tapLon: tapLon ?? this.tapLon,
+    );
+  }
+}
+
 enum TurnKind {
   start,
   continueStraight,

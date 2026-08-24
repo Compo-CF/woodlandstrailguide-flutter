@@ -33,6 +33,9 @@ dependencies:
   # GPS access
   geolocator: ^13.0.1
 
+  # Forward geocoding for the route planner's "Address" starting point.
+  geocoding: ^3.0.0
+
   # Keeps the screen on during turn-by-turn navigation — Android
   # equivalent of iOS's UIApplication.isIdleTimerDisabled.
   wakelock_plus: ^1.2.8
