@@ -115,6 +115,12 @@ class _RoutePlannerSheetState extends State<RoutePlannerSheet> {
     _shape = d?.shape ?? PlannedRouteShape.loop;
     _startMode = d?.startMode ?? RouteStartMode.currentLocation;
     _addressController = TextEditingController(text: d?.addressText ?? '');
+    // The Find button's enabled state is derived from this controller's
+    // text, and a TextField edit does NOT rebuild its parent on its own —
+    // without this listener the button stayed greyed out no matter what
+    // was typed, only springing to life when some unrelated setState
+    // happened to rebuild the sheet.
+    _addressController.addListener(_onAddressChanged);
     _addressLat = d?.addressLat;
     _addressLon = d?.addressLon;
     _addressLabel = d?.addressLabel;
@@ -122,8 +128,27 @@ class _RoutePlannerSheetState extends State<RoutePlannerSheet> {
     _tapLon = d?.tapLon;
   }
 
+  /// Rebuilds so the Find button's enabled state tracks the field. Also
+  /// clears a stale resolved coordinate: once the text no longer matches
+  /// what was geocoded, the green "found it" checkmark below the field is
+  /// lying, and Generate would silently route from the OLD address.
+  void _onAddressChanged() {
+    final text = _addressController.text.trim();
+    final stale = _addressLabel != null && text != _addressLabel;
+    if (!mounted) return;
+    setState(() {
+      if (stale) {
+        _addressLat = null;
+        _addressLon = null;
+        _addressLabel = null;
+      }
+      _addressError = null;
+    });
+  }
+
   @override
   void dispose() {
+    _addressController.removeListener(_onAddressChanged);
     _addressController.dispose();
     super.dispose();
   }

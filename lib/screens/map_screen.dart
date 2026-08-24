@@ -596,17 +596,27 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
+  /// Records a route-planner starting point picked by tapping the map and
+  /// reopens the planner sheet with it. Called from both GoogleMap.onTap
+  /// (bare map / trail polylines, which are made non-consuming while
+  /// awaiting) and from POI marker taps — markers always consume their
+  /// tap, so they can't fall through to the map handler and have to call
+  /// this directly with their own coordinate.
+  void _resolvePlannerTap(LatLng pos, TrailGraph graph, RoutingState routing) {
+    setState(() {
+      _awaitingPlannerTap = false;
+      _plannerDraft = (_plannerDraft ?? const RouteDraft()).copyWith(
+        startMode: RouteStartMode.tapOnMap,
+        tapLat: pos.latitude,
+        tapLon: pos.longitude,
+      );
+    });
+    _reopenRoutePlanner(graph, routing, context.read<UserDataStore>());
+  }
+
   void _onMapTap(LatLng pos, TrailGraph graph, RoutingState routing) {
     if (_awaitingPlannerTap) {
-      setState(() {
-        _awaitingPlannerTap = false;
-        _plannerDraft = (_plannerDraft ?? const RouteDraft()).copyWith(
-          startMode: RouteStartMode.tapOnMap,
-          tapLat: pos.latitude,
-          tapLon: pos.longitude,
-        );
-      });
-      _reopenRoutePlanner(graph, routing, context.read<UserDataStore>());
+      _resolvePlannerTap(pos, graph, routing);
       return;
     }
     if (!routing.routingMode) return;
@@ -902,12 +912,19 @@ class _MapScreenState extends State<MapScreen> {
   bool? _cachedWayPolylinesTappable;
 
   Set<Polyline> _wayPolylines(TrailGraph graph, RoutingState routing) {
-    // Trails are only tappable-for-detail when NOT actively routing —
-    // in routing mode a tap on a trail should register as a start/end/
-    // waypoint point instead of popping the detail sheet, so we leave
-    // consumeTapEvents off and let the tap fall through to the map's
-    // onTap handler.
-    final tappable = !routing.routingMode;
+    // Trails are only tappable-for-detail when NOT actively routing and
+    // NOT waiting on a route-planner starting-point tap. In either of
+    // those modes a tap on a trail should register as a point instead of
+    // popping the detail sheet, so we leave consumeTapEvents off and let
+    // the tap fall through to the map's onTap handler.
+    //
+    // The _awaitingPlannerTap half is load-bearing on Android in a way it
+    // isn't on iOS: iOS intercepts in one UITapGestureRecognizer that sees
+    // every tap, but here a polyline with consumeTapEvents: true swallows
+    // the tap entirely and GoogleMap.onTap never fires — so without this,
+    // tapping a trail during "tap to set your starting point" just opened
+    // the trail detail sheet and the banner sat there forever.
+    final tappable = !routing.routingMode && !_awaitingPlannerTap;
     if (_cachedWayPolylines != null &&
         identical(_cachedWayPolylinesGraph, graph) &&
         _cachedWayPolylinesTappable == tappable) {
@@ -973,12 +990,14 @@ class _MapScreenState extends State<MapScreen> {
   Set<Marker>? _cachedPOIMarkers;
   List<POICategory>? _cachedPOICategories;
   int? _cachedPOIZoomBand;
+  bool? _cachedPOIAwaitingPlannerTap;
 
   Set<Marker> _poiMarkers(
       List<POICategory> categories, TrailGraph graph, RoutingState routing) {
     if (_cachedPOIMarkers != null &&
         identical(_cachedPOICategories, categories) &&
-        _cachedPOIZoomBand == _zoomBand) {
+        _cachedPOIZoomBand == _zoomBand &&
+        _cachedPOIAwaitingPlannerTap == _awaitingPlannerTap) {
       unawaited(DebugLog.log('_poiMarkers: cache HIT'));
       return _cachedPOIMarkers!;
     }
@@ -997,7 +1016,14 @@ class _MapScreenState extends State<MapScreen> {
           markerId: MarkerId('${cat.key}__${poi.id}'),
           position: LatLng(poi.lat, poi.lon),
           icon: icon,
-          onTap: () => _showPOIDetail(poi, cat, graph, routing),
+          // While the planner is waiting on a starting point, a POI tap
+          // sets the start at that POI instead of opening its detail
+          // sheet — markers always consume their tap, so they can't fall
+          // through to GoogleMap.onTap the way polylines can.
+          onTap: _awaitingPlannerTap
+              ? () => _resolvePlannerTap(
+                  LatLng(poi.lat, poi.lon), graph, routing)
+              : () => _showPOIDetail(poi, cat, graph, routing),
         ));
       }
     }
@@ -1007,6 +1033,7 @@ class _MapScreenState extends State<MapScreen> {
     _cachedPOIMarkers = markers;
     _cachedPOICategories = categories;
     _cachedPOIZoomBand = _zoomBand;
+    _cachedPOIAwaitingPlannerTap = _awaitingPlannerTap;
     return markers;
   }
 
