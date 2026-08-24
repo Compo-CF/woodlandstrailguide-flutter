@@ -31,12 +31,20 @@ allprojects {
     // much-lower value on at least one build machine and trips AGP's
     // cross-module compileSdk consistency check, even though :app's own
     // build.gradle.kts already pins a newer literal. :app itself doesn't
-    // need this — its compileSdk is already an explicit literal — but
-    // this covers every other subproject uniformly instead of chasing
-    // one plugin at a time.
+    // need this — its compileSdk is already an explicit literal.
+    //
+    // Must be afterEvaluate, not withPlugin like the block above: a
+    // withPlugin callback fires the instant the plugin is applied, which
+    // is BEFORE the subproject's own build.gradle reaches its own
+    // `compileSdk = flutter.compileSdkVersion` line further down that
+    // same script — so that later assignment was winning and clobbering
+    // this override. afterEvaluate runs once the whole subproject script
+    // (including that later line) has already finished.
     pluginManager.withPlugin("com.android.library") {
-        extensions.configure<com.android.build.gradle.LibraryExtension> {
-            compileSdk = 36
+        afterEvaluate {
+            extensions.configure<com.android.build.gradle.LibraryExtension> {
+                compileSdk = 36
+            }
         }
     }
 }
