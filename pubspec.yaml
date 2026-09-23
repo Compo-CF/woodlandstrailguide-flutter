@@ -1,7 +1,7 @@
 name: woodlandstrailguide_flutter
 description: "Woodlands Trail Guide — Android edition"
 publish_to: 'none'
-version: 0.2.0+2
+version: 1.0.0+3
 
 environment:
   sdk: ^3.12.2
