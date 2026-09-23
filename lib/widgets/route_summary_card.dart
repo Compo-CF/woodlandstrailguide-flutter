@@ -114,6 +114,33 @@ class RouteSummaryCard extends StatelessWidget {
                     ),
                   ],
                 ),
+                // Say so when the network couldn't supply the requested
+                // distance. Restricting to Natural trails near a spot with
+                // little unpaved mileage can land far short of target — the
+                // "Planned 5.0 mi" line above then reads as a broken promise
+                // next to a 0.9 mi route, with nothing explaining the gap.
+                // Direct port of the iOS fix in MapTabView.
+                if (route.lengthMeters <
+                    activePlan!.targetMeters * _shortfallThreshold) ...[
+                  const SizedBox(height: 6),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(Icons.warning_amber_rounded,
+                          size: 14, color: NaturalPalette.route),
+                      const SizedBox(width: 5),
+                      Flexible(
+                        child: Text(
+                          _shortfallMessage(activePlan!.surfacePreference),
+                          style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                              color: NaturalPalette.route),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ],
               if ((distanceToRoute ?? 0) > 100) ...[
                 const SizedBox(height: 6),
@@ -334,5 +361,28 @@ class RoutingHintCard extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+/// How close to target still counts as "we got you what you asked for".
+/// Routes are built from real graph edges, so landing a bit under is normal
+/// and shouldn't trigger a warning; this only catches genuine shortfalls.
+/// Matches the iOS threshold.
+const double _shortfallThreshold = 0.75;
+
+String _shortfallMessage(SurfacePreference pref) {
+  switch (pref) {
+    case SurfacePreference.natural:
+      return "Not enough connected natural-surface trail near the start for "
+          "that distance — this is the longest one available. Try Any surface "
+          "for a longer route.";
+    case SurfacePreference.paved:
+      return "Not enough connected paved pathway near the start for that "
+          "distance — this is the longest one available. Try Any surface for "
+          "a longer route.";
+    case SurfacePreference.any:
+      return "The pathway network near the start doesn't connect into a route "
+          "that long — this is the longest one available. Try starting "
+          "somewhere more central.";
   }
 }
