@@ -233,7 +233,15 @@ Category: **Utility / Reference**. Expect **Everyone / PEGI 3**.
 ## 7. Closed testing
 
 Play requires a closed test with **12+ testers opted in for 14 continuous
-days** before a personal developer account can apply for production access.
+days** before applying for production access.
+
+**This is PER APP, not per account — verified 2026-09-26 against Google's
+own documentation.** Having cleared the gate for another app on the same
+account (Good Shepherd, S-Tier Eats) does NOT exempt Trail Guide. Google's
+wording is "run a closed test for *their app*", and nothing in the policy
+grants an account-wide exemption. Do not skip this on the assumption that
+production access carries over; it does not.
+https://support.google.com/googleplay/android-developer/answer/14151465
 
 1. Play Console → Testing → Closed testing → create a track
 2. Upload `app-release.aab`
