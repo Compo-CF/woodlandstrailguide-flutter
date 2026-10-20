@@ -10,6 +10,47 @@ Data Safety is a binding declaration to Google, not a description.
 
 ---
 
+## 0a. Package name is locked to `com.compofelice.woodlandstrailguide_flutter`
+
+**Do not "clean up" the `_flutter` suffix. It cannot be changed.**
+
+The Play Console app was created 2026-07-14 as
+`com.compofelice.woodlandstrailguide_flutter` (the Flutter scaffold default)
+and took a v0.1.0+1 Internal Testing upload under that name. A package name
+is permanent for the life of a Play Console app.
+
+On 2026-08-13, commit `50dddd2` renamed the package to
+`com.compofelice.woodlandstrailguide`, reasoning that applicationId is
+permanent "after the first Play Store submission". That reasoning was right
+but the deadline was wrong: the binding event was **creating the Console app
+and uploading to Internal Testing in July**, not a future production
+submission. The rename was already too late when it was made.
+
+The symptom, months later, is an upload rejected with:
+
+> Your APK or Android App Bundle needs to have the package name
+> com.compofelice.woodlandstrailguide_flutter
+
+Reverted 2026-10-20. `applicationId`, `namespace` and `MainActivity.kt`'s
+package and directory are all back on the `_flutter` name, and that is the
+name this app ships under permanently. The manifest refers to the activity
+relatively (`.MainActivity`), so nothing else needed touching.
+
+Verify before every upload:
+
+```
+unzip -o -q build/app/outputs/bundle/release/app-release.aab 'base/manifest/AndroidManifest.xml' -d /tmp/aabchk
+grep -ao 'com\.compofelice\.woodlandstrailguide[a-z_]*' /tmp/aabchk/base/manifest/AndroidManifest.xml | sort -u
+```
+
+Also package-bound, and worth re-checking if this ever changes again: the
+Google Maps Android API key's app restriction (package name + SHA-1, in
+Google Cloud) and the AdMob app's Play link. Both appear unrestricted today —
+the app ran on the tablet under `_flutter` in July and on the Pixel 7a under
+the short name in September, and the map worked both times.
+
+---
+
 ## 0. Signing
 
 **Build this on Windows.** Android needs no Mac, and the Windows machine
@@ -85,10 +126,10 @@ launch where the debug build didn't, that's the first place to look.
 
 ## 2. Store listing
 
-**App name** (≤30 chars)
+**App name** (≤30 chars) — 25 chars, fits.
 
 ```
-Woodlands Trail Guide
+The Woodlands Trail Guide
 ```
 
 **Short description** (≤80 chars)
@@ -97,10 +138,27 @@ Woodlands Trail Guide
 Trail maps, routes and walk planning for The Woodlands, Texas.
 ```
 
+**Release notes / "What's new"** (≤500 chars per language, en-US)
+
+First Play release, so these introduce the app rather than describe a delta —
+closed testers have seen nothing before this.
+
+```
+First release of The Woodlands Trail Guide on Android.
+
+Maps the Township's full pathway network and plans a walk, jog or run to the
+distance or time you pick — loop or out-and-back, starting from your location,
+an address, or any point you tap. Turn-by-turn directions written for pathways,
+with automatic rerouting if you wander off. Restrooms, parking, playgrounds and
+more appear as you zoom. Finished walks are logged, and you can share a card of
+the route you took.
+```
+
 **Full description** (≤4000 chars)
 
 ```
-Woodlands Trail Guide maps the full pathway network of The Woodlands, Texas —
+The Woodlands Trail Guide maps the full pathway network of The Woodlands,
+Texas —
 over 200 miles of paved pathways and natural trails — and helps you actually
 use it.
 
