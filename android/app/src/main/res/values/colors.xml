@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Deep forest green, matching SplashView.background in
+         lib/widgets/splash_view.dart. The OS paints this window before any
+         Dart runs, so sharing the exact value is what makes the handoff into
+         the animated splash invisible. Mirrors the iOS LaunchBackground
+         colour asset. -->
+    <color name="launch_background">#12351F</color>
+</resources>

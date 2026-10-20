@@ -5,6 +5,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:in_app_review/in_app_review.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../models/achievement.dart';
@@ -18,11 +19,14 @@ import '../services/router.dart';
 import '../services/routing_bridge.dart';
 import '../state/routing_state.dart';
 import '../stores/poi_store.dart';
+import '../stores/polygon_store.dart';
+import '../models/polygon_catalog.dart';
 import '../stores/trail_store.dart';
 import '../stores/user_data_store.dart';
 import '../stores/weather_store.dart';
 import '../theme/natural_palette.dart';
 import '../widgets/achievements_sheet.dart';
+import '../widgets/walk_summary_sheet.dart';
 import '../widgets/admob_banner.dart';
 import '../widgets/navigation_banner.dart';
 import '../widgets/poi_detail_sheet.dart';
@@ -52,6 +56,13 @@ class MapScreen extends StatefulWidget {
 class _MapScreenState extends State<MapScreen> {
   GoogleMapController? _controller;
   MapType _mapType = MapType.normal;
+
+  /// Context overlays are suppressed over imagery. A translucent green park
+  /// fill drawn on top of an aerial photo of that same park is noise — the
+  /// imagery already shows where the trees are, and the fill only mutes it.
+  /// Mirrors nothing on iOS only because MapKit's imagery mode is reached
+  /// differently; the judgement is the same.
+  bool get _isSatellite => _mapType != MapType.normal;
   bool _hasLocationPermission = false;
 
   int _zoomBand = 0;
@@ -112,6 +123,14 @@ class _MapScreenState extends State<MapScreen> {
   /// see _scheduleOverlayReveal below.
   bool _overlaysReady = false;
   bool _overlayRevealScheduled = false;
+
+  /// True one frame after [_overlaysReady]. The park/lake/creek context
+  /// layer is another ~53,000 coordinates on top of the trail network's
+  /// ~1,500 polylines; revealing both in the same frame doubles the
+  /// platform-channel burst that _overlaysReady exists to avoid in the
+  /// first place. Trails are the app, so they go first.
+  bool _contextOverlaysReady = false;
+  bool _contextRevealScheduled = false;
 
   static const _tierAlways = <String>{
     'parking_park',
@@ -201,6 +220,7 @@ class _MapScreenState extends State<MapScreen> {
         'overlaysReady=$_overlaysReady'));
     final trailStore = context.watch<TrailStore>();
     final poiStore = context.watch<POIStore>();
+    final polygonStore = context.watch<PolygonStore>();
     final routing = context.watch<RoutingState>();
     final weatherStore = context.watch<WeatherStore>();
     final elevationService = context.watch<ElevationService>();
@@ -230,12 +250,22 @@ class _MapScreenState extends State<MapScreen> {
       });
     }
 
+    // Context overlays follow one frame behind the trail network.
+    if (_overlaysReady && !_contextOverlaysReady && !_contextRevealScheduled) {
+      _contextRevealScheduled = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _contextOverlaysReady = true);
+      });
+    }
+
     return Scaffold(
       body: graph == null
           ? _loadingOrError(trailStore)
           : Column(
               children: [
-                Expanded(child: _mapStack(graph, poiStore, routing, weatherStore, elevationService, userData)),
+                Expanded(
+                    child: _mapStack(graph, poiStore, polygonStore, routing,
+                        weatherStore, elevationService, userData)),
                 // Sits below the map content like iOS's
                 // safeAreaInset(edge: .bottom) — always visible, never
                 // covered by the route summary card or nav banner.
@@ -248,6 +278,7 @@ class _MapScreenState extends State<MapScreen> {
   Widget _mapStack(
     TrailGraph graph,
     POIStore poiStore,
+    PolygonStore polygonStore,
     RoutingState routing,
     WeatherStore weatherStore,
     ElevationService elevationService,
@@ -261,7 +292,13 @@ class _MapScreenState extends State<MapScreen> {
                     zoom: 12,
                   ),
                   mapType: _mapType,
+                  polygons: {
+                    if (_contextOverlaysReady && !_isSatellite)
+                      ..._contextPolygons(polygonStore.catalog),
+                  },
                   polylines: {
+                    if (_contextOverlaysReady && !_isSatellite)
+                      ..._creekLines(polygonStore.catalog),
                     if (_overlaysReady) ..._wayPolylines(graph, routing),
                     ..._routePolyline(graph, routing),
                   },
@@ -494,6 +531,28 @@ class _MapScreenState extends State<MapScreen> {
     ).listen(_onPositionUpdate);
   }
 
+  /// Everything that happens once, after a walk is completed: the
+  /// achievement toast, the shareable summary, and — only for a user who
+  /// has actually gotten value out of the app — the Play review card.
+  ///
+  /// Sequenced rather than fired together. A toast, a modal sheet and a
+  /// system dialog arriving at the same moment is three things competing
+  /// for one tap, and the review prompt in particular is a scarce resource
+  /// not worth spending on a user who is busy dismissing something else.
+  Future<void> _afterArrival(
+      UserDataStore userData, bool hasTipped, WalkSummary summary) async {
+    await _checkAndShowAchievements(userData, hasTipped);
+    if (!mounted) return;
+    await WalkSummarySheet.show(context, summary);
+    if (!mounted) return;
+
+    if (!userData.eligibleForReviewRequest) return;
+    final review = InAppReview.instance;
+    if (!await review.isAvailable()) return;
+    await review.requestReview();
+    await userData.markReviewRequested();
+  }
+
   Future<void> _checkAndShowAchievements(UserDataStore userData, bool hasTipped) async {
     final newlyEarned = await userData.checkForNewAchievements(hasTipped: hasTipped);
     if (newlyEarned.isEmpty || !mounted) return;
@@ -549,8 +608,25 @@ class _MapScreenState extends State<MapScreen> {
         travelMode: userData.travelMode,
       );
       _navigationStartedAt = null;
+
+      // Offer the shareable card. Built from the route that was actually
+      // walked, so the trace on the card matches what the map just showed.
+      final summary = WalkSummary(
+        distanceMeters: r.lengthMeters,
+        durationSeconds: duration,
+        travelMode: userData.travelMode,
+        segmentNames: r.namedSegments.map((s) => s.name).toList(),
+        parks: r.parks,
+        coordinates: r.nodes
+            .where((idx) => idx >= 0 && idx < graph.nodes.length)
+            .map((idx) =>
+                (lat: graph.nodes[idx].lat, lon: graph.nodes[idx].lon))
+            .toList(),
+        date: DateTime.now(),
+      );
+
       final hasTipped = context.read<IAPStore>().tipCount > 0;
-      unawaited(_checkAndShowAchievements(userData, hasTipped));
+      unawaited(_afterArrival(userData, hasTipped, summary));
     }
 
     _controller?.animateCamera(
@@ -799,7 +875,7 @@ class _MapScreenState extends State<MapScreen> {
     final miles = routing.route?.miles ?? 0;
     await Share.share(
       'Check out this ${miles.toStringAsFixed(1)} mi walk in The '
-      'Woodlands — open it in Woodlands Trail Guide:\n$url',
+      'Woodlands — open it in the Trail Guide app:\n$url',
     );
   }
 
@@ -965,6 +1041,97 @@ class _MapScreenState extends State<MapScreen> {
     unawaited(DebugLog.log(
         '_wayPolylines: rebuilt ${polys.length} polylines in ${sw.elapsedMilliseconds}ms'));
     return polys;
+  }
+
+  // Context overlays (parks, lakes, village outlines, creeks). Cached on
+  // catalog identity for the same reason the trail polylines are: rebuilding
+  // 331 polygons out of ~40,000 coordinates on every frame is not viable,
+  // and PolygonStore deliberately keeps the same instance when a refresh
+  // brings back data it already has.
+
+  Set<Polygon>? _cachedContextPolygons;
+  PolygonCatalog? _cachedPolygonCatalog;
+
+  Set<Polygon> _contextPolygons(PolygonCatalog? catalog) {
+    if (catalog == null) return const {};
+    if (_cachedContextPolygons != null &&
+        identical(_cachedPolygonCatalog, catalog)) {
+      return _cachedContextPolygons!;
+    }
+
+    final out = <Polygon>{};
+    for (final entry in catalog.polygons.entries) {
+      final group = entry.value;
+      // Alpha values match the iOS renderer in TrailMapView.swift, so the
+      // two maps read as the same map.
+      final fill = argbFromHex(group.fill, 0.55);
+      final stroke = argbFromHex(group.fill, 0.78);
+      for (var i = 0; i < group.items.length; i++) {
+        final shape = group.items[i];
+        if (shape.rings.isEmpty || shape.rings.first.length < 3) continue;
+        out.add(Polygon(
+          polygonId: PolygonId('ctx_${entry.key}_$i'),
+          points: shape.rings.first,
+          // Rings after the first are holes — lakes inside parks, islands
+          // inside lakes. Google Maps needs them >= 3 points apiece.
+          holes: shape.rings
+              .skip(1)
+              .where((r) => r.length >= 3)
+              .toList(growable: false),
+          // A group with no fill colour (village boundaries) draws as an
+          // outline only; a translucent fill over a third of the map would
+          // flatten everything underneath it.
+          fillColor: fill == null ? Colors.transparent : Color(fill),
+          strokeColor:
+              stroke == null ? const Color(0x1F000000) : Color(stroke),
+          strokeWidth: 1,
+          // Below the trail network (zIndex 0) and the active route (10).
+          // These are background; the trails are the point.
+          zIndex: -1,
+          consumeTapEvents: false,
+        ));
+      }
+    }
+
+    _cachedContextPolygons = out;
+    _cachedPolygonCatalog = catalog;
+    return out;
+  }
+
+  Set<Polyline>? _cachedCreekLines;
+  PolygonCatalog? _cachedCreekCatalog;
+
+  Set<Polyline> _creekLines(PolygonCatalog? catalog) {
+    if (catalog == null) return const {};
+    if (_cachedCreekLines != null && identical(_cachedCreekCatalog, catalog)) {
+      return _cachedCreekLines!;
+    }
+
+    final out = <Polyline>{};
+    for (final entry in catalog.lines.entries) {
+      final group = entry.value;
+      final stroke = argbFromHex(group.stroke, 0.75);
+      for (var i = 0; i < group.items.length; i++) {
+        final points = group.items[i];
+        if (points.length < 2) continue;
+        out.add(Polyline(
+          polylineId: PolylineId('ctx_${entry.key}_$i'),
+          points: points,
+          color: stroke == null ? const Color(0x802196F3) : Color(stroke),
+          width: 2,
+          geodesic: false,
+          zIndex: -1,
+          // Never swallow a tap: a creek crossing a trail must not stop the
+          // trail underneath it from opening, and must not eat the tap that
+          // sets a route point.
+          consumeTapEvents: false,
+        ));
+      }
+    }
+
+    _cachedCreekLines = out;
+    _cachedCreekCatalog = catalog;
+    return out;
   }
 
   Set<Polyline> _routePolyline(TrailGraph graph, RoutingState routing) {

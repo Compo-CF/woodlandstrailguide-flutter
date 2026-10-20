@@ -1,4 +1,4 @@
-// Woodlands Trail Guide — Android edition.
+// The Woodlands Trail Guide — Android edition.
 //
 // Entry point wires up the shared data stores (TrailStore, POIStore,
 // FeaturedWalkStore, RoutingState) via Provider and lays out the
@@ -14,6 +14,7 @@ import 'package:provider/provider.dart';
 
 import 'stores/trail_store.dart';
 import 'stores/poi_store.dart';
+import 'stores/polygon_store.dart';
 import 'stores/featured_walk_store.dart';
 import 'stores/user_data_store.dart';
 import 'stores/weather_store.dart';
@@ -28,6 +29,8 @@ import 'screens/featured_screen.dart';
 import 'screens/about_screen.dart';
 import 'screens/onboarding_screen.dart';
 import 'theme/natural_palette.dart';
+import 'theme/natural_type.dart';
+import 'widgets/splash_view.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -56,6 +59,7 @@ class WoodlandsTrailGuideApp extends StatelessWidget {
       providers: [
         ChangeNotifierProvider(create: (_) => TrailStore()..load()),
         ChangeNotifierProvider(create: (_) => POIStore()..load()),
+        ChangeNotifierProvider(create: (_) => PolygonStore()..load()),
         ChangeNotifierProvider(create: (_) => FeaturedWalkStore()..load()),
         ChangeNotifierProvider(create: (_) {
           // load() must finish before recordAppLaunch() — the cascade
@@ -72,17 +76,91 @@ class WoodlandsTrailGuideApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => IAPStore()..init()),
       ],
       child: MaterialApp(
-        title: 'Woodlands Trail Guide',
+        title: 'The Woodlands Trail Guide',
         debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(seedColor: NaturalPalette.forest),
-          scaffoldBackgroundColor: NaturalPalette.cardBg,
-          useMaterial3: true,
-        ),
-        home: const RootTabShell(),
+        theme: _naturalTheme(),
+        // Pinned light. The palette has no dark variants yet (see the note
+        // in natural_palette.dart); leaving themeMode on system would let
+        // Material darken its own widgets while every hand-coloured surface
+        // stayed cream, which looks worse than simply staying light.
+        themeMode: ThemeMode.light,
+        home: const SplashGate(child: RootTabShell()),
       ),
     );
   }
+}
+
+/// One place that maps the Natural design system onto Material, so screens
+/// stop reaching for stock Material colours. Previously this was a bare
+/// `ColorScheme.fromSeed`, which derived a whole Material 3 palette from the
+/// forest green and then applied it to surfaces the design system already
+/// has opinions about — the result was lilac-tinted sheets and grey-blue
+/// dividers sitting next to hand-coloured cream cards.
+ThemeData _naturalTheme() {
+  final base = ThemeData(
+    useMaterial3: true,
+    colorScheme: ColorScheme.fromSeed(
+      seedColor: NaturalPalette.forest,
+      primary: NaturalPalette.forest,
+      secondary: NaturalPalette.route,
+      surface: NaturalPalette.cardBg,
+      onSurface: NaturalPalette.ink,
+    ),
+    scaffoldBackgroundColor: NaturalPalette.cardBg,
+  );
+
+  return base.copyWith(
+    // Display face for the headline slots only. Body and label styles stay
+    // on the system font: Fraunces is a display serif and gets fragile
+    // below ~15sp, which is most of what a UI actually renders.
+    textTheme: base.textTheme.copyWith(
+      displayLarge: NaturalType.hero(color: NaturalPalette.ink),
+      headlineSmall: NaturalType.title(color: NaturalPalette.ink),
+      titleLarge: NaturalType.title(color: NaturalPalette.ink),
+      titleMedium: NaturalType.heading(color: NaturalPalette.ink),
+    ),
+    dividerTheme: const DividerThemeData(
+      color: NaturalPalette.hairline,
+      thickness: 1,
+      space: 1,
+    ),
+    bottomSheetTheme: const BottomSheetThemeData(
+      backgroundColor: NaturalPalette.cardBg,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(NaturalMetrics.radiusLarge),
+        ),
+      ),
+    ),
+    dialogTheme: const DialogThemeData(
+      backgroundColor: NaturalPalette.cardBg,
+      surfaceTintColor: Colors.transparent,
+    ),
+    cardTheme: const CardThemeData(
+      color: NaturalPalette.cardBg,
+      surfaceTintColor: Colors.transparent,
+    ),
+    navigationBarTheme: NavigationBarThemeData(
+      backgroundColor: NaturalPalette.cardBg,
+      surfaceTintColor: Colors.transparent,
+      indicatorColor: NaturalPalette.chipBg,
+      iconTheme: WidgetStateProperty.resolveWith((states) => IconThemeData(
+            color: states.contains(WidgetState.selected)
+                ? NaturalPalette.forest
+                : NaturalPalette.inkMuted,
+          )),
+      labelTextStyle: WidgetStateProperty.resolveWith((states) => TextStyle(
+            fontSize: 12,
+            fontWeight: states.contains(WidgetState.selected)
+                ? FontWeight.w600
+                : FontWeight.w500,
+            color: states.contains(WidgetState.selected)
+                ? NaturalPalette.forest
+                : NaturalPalette.inkMuted,
+          )),
+    ),
+  );
 }
 
 /// Bottom tab bar: Map / Trails / Route / Featured / About. The Route

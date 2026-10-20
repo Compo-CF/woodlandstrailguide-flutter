@@ -10,7 +10,21 @@ Data Safety is a binding declaration to Google, not a description.
 
 ---
 
-## 0. Blocker: signing (do this first)
+## 0. Signing
+
+**Build this on Windows.** Android needs no Mac, and the Windows machine
+already has both halves of the signing material in place —
+`C:/Users/anthony.compofelice/woodlandstrailguide-upload.jks` and
+`android/key.properties` pointing at it. From the repo root:
+
+```
+flutter build appbundle --release
+```
+
+The rest of this section applies only if you build on the Mac instead, where
+the signing material is absent and the failure is silent.
+
+### If you build on the Mac
 
 `flutter build appbundle --release` on the Mac will **succeed and produce an
 unusable bundle** unless this is fixed first.
@@ -192,6 +206,17 @@ Verified against the code: outbound hosts are `api.open-meteo.com`,
 `INTERNET`, `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION`,
 `READ_MEDIA_IMAGES`, `com.android.vending.BILLING`; there is no sign-in SDK and
 no user-generated content.
+
+Re-verified 2026-10-20 after the iOS-parity pass. Nothing in that pass changes
+these answers:
+
+- `PolygonStore` fetches `Polygons.json` from `compo-cf.github.io`, a host
+  already declared.
+- `in_app_review` talks to Play Services on-device and collects nothing the
+  app declares.
+- `WalkSummarySheet` writes a PNG to the app's own cache directory and hands
+  it to the system share sheet. Nothing is uploaded; where the user sends it
+  afterwards is the user's action in another app, not collection by this one.
 
 | Data type | Collected | Shared | Purpose | Notes |
 |---|---|---|---|---|

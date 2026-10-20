@@ -20,6 +20,7 @@ class UserDataStore extends ChangeNotifier {
   static const _appLaunchesKey = 'appLaunches.v1';
   static const _tripLogKey = 'tripLog.v1';
   static const _routesCompletedKey = 'routesCompleted.v1';
+  static const _lastReviewRequestKey = 'lastReviewRequestedAt.v1';
   static const _travelModeKey = 'travelMode.v1';
   static const _preferPavedKey = 'preferPavedRoutes.v1';
   static const _celebratedAchievementsKey = 'celebratedAchievementIDs.v1';
@@ -178,6 +179,51 @@ class UserDataStore extends ChangeNotifier {
     final encoded = jsonEncode(tripLog.map((e) => e.toJson()).toList());
     await _prefs?.setString(_tripLogKey, encoded);
   }
+
+  /// When we last asked Play to consider showing the in-app review flow.
+  /// Google caps the actual presentation with an undocumented internal
+  /// quota regardless of how often requestReview() is called, so a 30-day
+  /// local cooldown keeps us from burning a request inside a single short
+  /// engagement window. Mirrors iOS's lastReviewRequestedAt.
+  DateTime? get lastReviewRequestedAt {
+    final ms = _prefs?.getInt(_lastReviewRequestKey);
+    return ms == null ? null : DateTime.fromMillisecondsSinceEpoch(ms);
+  }
+
+  Future<void> markReviewRequested() async {
+    await _prefs?.setInt(
+        _lastReviewRequestKey, DateTime.now().millisecondsSinceEpoch);
+  }
+
+  /// True when (a) the user has shown enough engagement to deserve being
+  /// asked, and (b) we haven't asked recently. The actual decision to show
+  /// a prompt still belongs to Play — this just gates our call, so we don't
+  /// spend a request on first-launch noise.
+  bool get eligibleForReviewRequest {
+    // Never on first launch.
+    if (appLaunches < 2) return false;
+    if (!hasMeaningfulEngagement) return false;
+    final last = lastReviewRequestedAt;
+    if (last != null && DateTime.now().difference(last).inDays < 30) {
+      return false;
+    }
+    return true;
+  }
+
+  /// True once the user has done something in the app beyond opening it.
+  ///
+  /// Play only surfaces the review card a limited number of times per user
+  /// no matter how often it's requested, so each call is a scarce resource.
+  /// Spending one on somebody who launched a few times but never routed,
+  /// favorited or logged a walk both wastes the quota and invites a low-star
+  /// rating from a user who hasn't gotten value yet. The appLaunches
+  /// fallback keeps the door open for the browse-only user who clearly keeps
+  /// coming back — they're engaged, just not via these specific features.
+  bool get hasMeaningfulEngagement =>
+      routesCompleted > 0 ||
+      tripLog.isNotEmpty ||
+      favoriteWayIDs.isNotEmpty ||
+      appLaunches >= 5;
 
   Future<void> markRouteCompleted() async {
     routesCompleted++;
