@@ -257,13 +257,44 @@ should not be.
 
 ---
 
+## 4a. Advertising ID declaration
+
+Required for anything targeting Android 13+, and it blocks "send for review"
+until answered. Verified against the bundle: `google_mobile_ads` merges
+`com.google.android.gms.permission.AD_ID` into the manifest even though the
+app never declares it, so the answer is unambiguous.
+
+- **Does your app use advertising ID?** → **Yes**
+- **Why?** → tick **Advertising or marketing** only.
+
+Every other box is a no against its own on-screen description:
+
+| Option | Why not |
+|---|---|
+| App functionality | The ad ID enables no feature. Routing, search and the trip log never touch it. |
+| Analytics | That means *app* analytics — "how users use your app, or how your app performs". There is no analytics SDK. Measuring **ad** performance is listed under Advertising or marketing, so AdMob is covered there. |
+| Developer communications | No push, no messaging. |
+| Fraud prevention, security, compliance | The example is monitoring your own app's failed logins. AdMob's invalid-traffic detection is Google's processing, not ours, and there are no accounts. |
+| Personalization | Nothing in the app is customised from it; ad personalisation falls under Advertising. |
+| Account management | No accounts, no sign-in. |
+
+⚠️ **Open gap: no UMP consent flow on Android.** `main.dart` sets
+`maxAdContentRating: g` and nothing else — there is no
+`ConsentInformation`/`ConsentForm` call. Google requires a consent mechanism
+to serve personalised ads to EEA/UK users, so either add UMP (Cosmica has a
+working implementation to copy) or restrict distribution to the US. Not a
+blocker for a US-only closed test, but it is a blocker for worldwide
+production release.
+
+---
+
 ## 5. Data Safety
 
 Verified against the code: outbound hosts are `api.open-meteo.com`,
 `api.open-elevation.com` and `compo-cf.github.io`; declared permissions are
 `INTERNET`, `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION`,
-`READ_MEDIA_IMAGES`, `com.android.vending.BILLING`; there is no sign-in SDK and
-no user-generated content.
+`com.android.vending.BILLING`; there is no sign-in SDK and no user-generated
+content.
 
 Re-verified 2026-10-20 after the iOS-parity pass. Nothing in that pass changes
 these answers:
@@ -275,6 +306,55 @@ these answers:
 - `WalkSummarySheet` writes a PNG to the app's own cache directory and hands
   it to the system share sheet. Nothing is uploaded; where the user sends it
   afterwards is the user's action in another app, not collection by this one.
+
+**`READ_MEDIA_IMAGES` was removed 2026-10-20 — do not add it back.** Play's
+release review flagged it under the Photo and Video Permissions policy and
+asked us to justify broad media access:
+
+> Describe why the Android photo picker or other system pickers do not fully
+> support your app's core functionality.
+
+They do fully support it, so there was nothing honest to write in that box.
+The permission had been declared once "for clarity" alongside the POI photo
+feature and was never needed: `pickImage(source: ImageSource.gallery)` goes
+through a system picker that returns a per-file URI grant. `image_picker_android`
+does not declare the permission either, so deleting our line removed it from
+the merged manifest outright — no `tools:node="remove"` required.
+
+At the same time `main.dart` now sets `useAndroidPhotoPicker = true`. That
+flag still defaults to **false** in `image_picker_android` 0.8.13, which
+leaves the plugin on the older `ACTION_GET_CONTENT` path — permission-free
+too, but not the picker the policy is written around. Opting in requires
+direct dependencies on `image_picker_android` and
+`image_picker_platform_interface`, which is the documented approach.
+
+Verify on any future bundle:
+
+```
+unzip -o -q build/app/outputs/bundle/release/app-release.aab 'base/manifest/AndroidManifest.xml' -d /tmp/aabchk
+grep -ac 'READ_MEDIA_IMAGES' /tmp/aabchk/base/manifest/AndroidManifest.xml
+```
+
+`0` is correct. Anything else means a dependency started merging it in and
+the Photo and Video Permissions form will come back.
+
+Check the **compiled** manifest from inside the .aab, as above, not Gradle's
+text one under `build/app/intermediates/merged_manifest*/`. The merger
+preserves XML comments, so the comment in `AndroidManifest.xml` explaining
+why the permission is absent makes a bare string grep there report a hit.
+If you do check the text version, match the declaration rather than the name:
+
+```
+grep -c 'uses-permission[^>]*READ_MEDIA_IMAGES' <merged manifest>
+```
+
+**If Play still shows the form after uploading a clean bundle**, the bundle is
+probably not the problem. A Play release keeps every bundle uploaded to it —
+a replacement is *added*, not swapped in — and the form is evaluated across
+all of them. Use the form's own "View app bundles and APKs" link to see which
+version code triggers it; if it is an older one, remove that bundle from the
+release, or discard the draft and create a fresh release containing only the
+clean build.
 
 | Data type | Collected | Shared | Purpose | Notes |
 |---|---|---|---|---|

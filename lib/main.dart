@@ -10,6 +10,8 @@ import 'dart:async';
 import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
+import 'package:image_picker_android/image_picker_android.dart';
+import 'package:image_picker_platform_interface/image_picker_platform_interface.dart';
 import 'package:provider/provider.dart';
 
 import 'stores/trail_store.dart';
@@ -44,6 +46,17 @@ void main() {
   MobileAds.instance.updateRequestConfiguration(
     RequestConfiguration(maxAdContentRating: MaxAdContentRating.g),
   );
+
+  // Use Android's system photo picker for POI photos rather than the
+  // plugin's default ACTION_GET_CONTENT path. The picker runs out of
+  // process and returns a single per-file URI grant, so the app needs no
+  // storage permission — which is why AndroidManifest.xml deliberately does
+  // not declare READ_MEDIA_IMAGES. The flag still defaults to false in
+  // image_picker_android, so it has to be set explicitly.
+  final picker = ImagePickerPlatform.instance;
+  if (picker is ImagePickerAndroid) {
+    picker.useAndroidPhotoPicker = true;
+  }
   runApp(const WoodlandsTrailGuideApp());
 }
 

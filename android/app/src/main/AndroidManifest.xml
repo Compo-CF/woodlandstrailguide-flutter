@@ -5,8 +5,13 @@
     <!-- Location — used to show the user's position on the trails and follow the route. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
-    <!-- Photo picker for POI photos (local-only, never uploaded). -->
-    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
+    <!-- No READ_MEDIA_IMAGES, deliberately. POI photos go through the system
+         photo picker, which hands back a per-file URI grant and needs no
+         storage permission at all. This was declared once "for clarity" and
+         was never needed; Play flags it as an undeclared photo/video
+         permission and asks you to justify broad media access we don't use.
+         image_picker_android does not declare it either, so deleting it here
+         removes it from the merged manifest outright. -->
     <!-- Google Play Billing (in_app_purchase plugin also auto-merges this,
          declared explicitly for clarity). -->
     <uses-permission android:name="com.android.vending.BILLING"/>

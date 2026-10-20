@@ -1,7 +1,7 @@
 name: woodlandstrailguide_flutter
 description: "Woodlands Trail Guide — Android edition"
 publish_to: 'none'
-version: 1.0.0+5
+version: 1.0.0+6
 
 environment:
   sdk: ^3.12.2
@@ -55,6 +55,15 @@ dependencies:
 
   # POI photos — local-only picker, no upload.
   image_picker: ^1.1.2
+  # Direct dependencies on the Android implementation + its interface so
+  # main.dart can set useAndroidPhotoPicker. That flag still defaults to
+  # false in image_picker_android 0.8.13, which leaves the plugin on the
+  # older ACTION_GET_CONTENT path; the Android photo picker is the UI
+  # Google's photo/video permissions policy expects, and the plugin ships a
+  # Play services module dependency that backports it to older devices.
+  # This is the documented way to opt in — see image_picker's README.
+  image_picker_android: ^0.8.13
+  image_picker_platform_interface: ^2.10.0
 
   # Deep links for share-a-route (woodlandstrailguide://route?...).
   app_links: ^6.3.0
