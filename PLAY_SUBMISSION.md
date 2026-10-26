@@ -105,22 +105,51 @@ unzip -p build/app/outputs/bundle/release/app-release.aab META-INF/*.RSA \
 
 ---
 
-## 1. Build
+## 1. Build and publish — one command
 
-```bash
-cd ~/woodlandstrailguide-flutter && git checkout -- pubspec.lock 2>/dev/null; \
-  git pull && flutter clean && flutter build appbundle --release
+From a **real PowerShell prompt** (not a sandboxed shell — see below):
+
+```powershell
+cd C:\Users\anthony.compofelice\woodlandstrailguide_flutter; .\scripts\release.ps1 -Track closed
 ```
+
+`scripts/release.ps1` builds, runs `scripts/verify_aab.py`, then uploads via
+`~/appstoreconnect/play_publish.py` (keyless — it impersonates the publisher
+service account using your gcloud ADC, because the org blocks downloadable SA
+keys). The iOS equivalent is `scripts/testflight.sh` in the
+`woodlandstrailguide` repo; that one is bash because it runs on the Mac, this
+one is PowerShell because Android needs no macOS and `bash` is not on PATH
+here.
+
+```
+scripts\release.ps1                     build, check, upload to internal
+scripts\release.ps1 -Track closed       upload to the closed testing track
+scripts\release.ps1 -CheckOnly          build and check, upload nothing
+scripts\release.ps1 -SkipBuild          check and upload an existing .aab
+scripts\release.ps1 -Track production -Rollout 0.2 -Notes "Fixes."
+```
+
+The verification step is not skippable, and every check in it is there because
+Play rejected a real upload for it — wrong package name (§0a), debug signing
+(§0), `READ_MEDIA_IMAGES` (§5). Two of the three fail **silently** at build
+time. Run `-CheckOnly` against any bundle you did not build yourself.
+
+**Build on Windows.** An earlier version of this runbook claimed Windows could
+not run Gradle at all. That is wrong, and it cost a detour to the Mac: Gradle
+fails only from a *sandboxed* shell, where `Selector.open()` cannot create its
+AF_UNIX pipe and Gradle reports the misleading "Unable to establish loopback
+connection". An ordinary PowerShell prompt builds fine — 1.0.0+6 was built and
+signed that way on 2026-10-20. A cold build is ~15 minutes;
+`lintVitalRelease` is the long tail.
 
 Output: `build/app/outputs/bundle/release/app-release.aab`
 
-Current version: **1.0.0 (versionCode 3)** — set in `pubspec.yaml` as
-`version: 1.0.0+3`. Every subsequent upload needs a higher versionCode.
+Version lives in `pubspec.yaml` as `version: 1.0.0+N`. **Every upload needs a
+higher N**, and Play has already consumed 6. Bump before rebuilding.
 
-Note: every Android build to date has been `--debug`. `--release` adds R8
-minification, and both `google_mobile_ads` and `in_app_purchase` have a history
-of needing ProGuard keep rules. If the build fails, or the app crashes on
-launch where the debug build didn't, that's the first place to look.
+Note on `--release`: it adds R8 minification, and both `google_mobile_ads` and
+`in_app_purchase` have a history of needing ProGuard keep rules. If the app
+crashes on launch where a debug build didn't, that's the first place to look.
 
 ---
 
