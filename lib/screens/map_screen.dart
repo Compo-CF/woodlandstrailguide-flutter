@@ -307,6 +307,17 @@ class _MapScreenState extends State<MapScreen> {
                       ..._poiMarkers(poiStore.categories, graph, routing),
                     ..._routingMarkers(graph, routing),
                   },
+                  clusterManagers: {
+                    ClusterManager(
+                      clusterManagerId: _poiClusterId,
+                      // Tapping a cluster zooms to its contents rather than
+                      // listing them. A bubble covering a whole park could
+                      // hold dozens of POIs, and a sheet of "Restroom,
+                      // Restroom, Parking" answers nothing — what the user
+                      // wants is to see where they actually are.
+                      onClusterTap: _zoomToCluster,
+                    ),
+                  },
                   onMapCreated: (c) => _controller = c,
                   onCameraIdle: _onCameraIdle,
                   onTap: (pos) => _onMapTap(pos, graph, routing),
@@ -315,6 +326,43 @@ class _MapScreenState extends State<MapScreen> {
                   zoomControlsEnabled: false,
                   compassEnabled: true,
                 ),
+
+                // Status-bar scrim (QA M-05). Green and purple POI pins were
+                // drawing straight under the clock and battery icons and
+                // blending into them.
+                //
+                // A fade rather than a SafeArea: wrapping the map would leave
+                // a dead band at the top of a full-bleed map, costing real
+                // estate on every screen to fix a problem that exists in one
+                // strip. Ignores pointer events so the map underneath stays
+                // pannable right to the top edge.
+                //
+                // Cream, not black. The app is pinned to a light theme, so
+                // Android draws DARK status-bar icons; a dark scrim would make
+                // them less readable than the pins QA complained about. A
+                // light wash mutes whatever is beneath and leaves the system's
+                // own icons at full contrast, in every map type.
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  height: MediaQuery.of(context).padding.top + 10,
+                  child: IgnorePointer(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            NaturalPalette.cardBg.withValues(alpha: 0.92),
+                            NaturalPalette.cardBg.withValues(alpha: 0.0),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+
                 Positioned(
                   top: 48,
                   left: 12,
@@ -712,9 +760,14 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   /// Opens the full POI detail sheet. "Route here" snaps the POI's
-  /// coordinates to the nearest graph node, enters routing mode, and
-  /// sets it as the start point — mirrors iOS POIDetailSheet's
-  /// onRouteHere wiring.
+  /// coordinates to the nearest graph node, enters routing mode, and makes it
+  /// the **destination**.
+  ///
+  /// This used to set it as the start, and the comment here claimed that
+  /// mirrored iOS. It did not — iOS `routeToPOI` assigns `endNode` — so
+  /// "Route here" did the opposite of its own label, then asked for a
+  /// destination after you had already named the place you wanted to go.
+  /// Reported by QA as M-06 against 1.0.0+6.
   void _showPOIDetail(
       POI poi, POICategory category, TrailGraph graph, RoutingState routing) {
     POIDetailSheet.show(
@@ -726,9 +779,21 @@ class _MapScreenState extends State<MapScreen> {
         final router = TrailRouter(graph);
         final node = router.nearestNode(poi.lat, poi.lon);
         if (node == null) return;
+        // A POI-targeted route is never a planned route, even if one was
+        // active — drop it so recompute() doesn't try to build a loop back to
+        // a start that no longer matches this destination. Same reasoning as
+        // iOS routeToPOI.
         routing.clearActivePlan();
         if (!routing.routingMode) routing.enterRoutingMode();
-        routing.setStart(node, graph);
+        // Seed the start from the user's position when we have one, so the
+        // common case — "get me to this park from here" — is a single tap
+        // rather than a tap plus a prompt.
+        final pos = _lastKnownPosition;
+        if (routing.startNode == null && pos != null) {
+          final from = router.nearestNode(pos.latitude, pos.longitude);
+          if (from != null) routing.setStart(from, graph);
+        }
+        routing.setEnd(node, graph);
       },
     );
   }
@@ -1159,6 +1224,36 @@ class _MapScreenState extends State<MapScreen> {
   int? _cachedPOIZoomBand;
   bool? _cachedPOIAwaitingPlannerTap;
 
+  /// Identifies the POI cluster manager. One manager for every category: the
+  /// pins crowd each other regardless of what they are, and separate managers
+  /// per category would still leave a dozen overlapping bubbles per park.
+  static const _poiClusterId = ClusterManagerId('pois');
+
+  /// Zoom in on a tapped cluster until its pins separate.
+  ///
+  /// Fits the cluster's own bounds rather than stepping zoom by a fixed
+  /// amount, so a tight knot of pins round one pavilion and a loose spread
+  /// across a whole park both land usefully.
+  Future<void> _zoomToCluster(Cluster cluster) async {
+    final controller = _controller;
+    if (controller == null) return;
+    final bounds = cluster.bounds;
+    // A cluster whose members sit on top of each other has zero-area bounds,
+    // and fitting that asks the camera for infinite zoom. Nudge to the
+    // cluster's position instead.
+    final sameSpot = bounds.northeast.latitude == bounds.southwest.latitude &&
+        bounds.northeast.longitude == bounds.southwest.longitude;
+    if (sameSpot) {
+      await controller.animateCamera(
+        CameraUpdate.newLatLngZoom(cluster.position, 17),
+      );
+      return;
+    }
+    await controller.animateCamera(
+      CameraUpdate.newLatLngBounds(bounds, 64),
+    );
+  }
+
   Set<Marker> _poiMarkers(
       List<POICategory> categories, TrailGraph graph, RoutingState routing) {
     if (_cachedPOIMarkers != null &&
@@ -1183,6 +1278,13 @@ class _MapScreenState extends State<MapScreen> {
           markerId: MarkerId('${cat.key}__${poi.id}'),
           position: LatLng(poi.lat, poi.lon),
           icon: icon,
+          // Clustered by the native Maps SDK (QA S-01). At the opening zoom
+          // the ~3,400 POI pins covered the trail network they are supposed
+          // to annotate, which is the one thing the map exists to show.
+          // Zoom-tier filtering alone could not fix that: the always-on tier
+          // is parking, restrooms and playgrounds, and those are exactly the
+          // ones that cluster thickly around every park.
+          clusterManagerId: _poiClusterId,
           // While the planner is waiting on a starting point, a POI tap
           // sets the start at that POI instead of opening its detail
           // sheet — markers always consume their tap, so they can't fall

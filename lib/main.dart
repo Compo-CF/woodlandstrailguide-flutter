@@ -216,7 +216,11 @@ class _RootTabShellState extends State<RootTabShell> {
   }
 
   void _onRoutingChanged() {
-    if (_routingState.pending != null && _index != 0 && mounted) {
+    // The Route tab displays the map too, so somebody sitting on it is
+    // already where a pending route needs them and should not be yanked onto
+    // the Map tab -- that would silently un-highlight Route for no reason.
+    final showingMap = _index == 0 || _index == _routeTabIndex;
+    if (_routingState.pending != null && !showingMap && mounted) {
       setState(() => _index = 0);
     }
   }
@@ -272,13 +276,23 @@ class _RootTabShellState extends State<RootTabShell> {
     ];
 
     return Scaffold(
-      body: IndexedStack(index: _index, children: tabs),
+      // Route shows the map's content, so the index is translated here, at
+      // display time, rather than at selection time. Doing it the other way
+      // round -- recording Map as the selected tab and hoping Route looked
+      // selected -- is what made the bottom bar claim you were on the plain
+      // map while the route planner was open on top of it. The old
+      // `_index == _routeTabIndex ? 0 : _index` on selectedIndex was dead
+      // code: _index was never set to the Route tab in the first place.
+      body: IndexedStack(
+        index: _index == _routeTabIndex ? 0 : _index,
+        children: tabs,
+      ),
       bottomNavigationBar: NavigationBar(
-        selectedIndex: _index == _routeTabIndex ? 0 : _index,
+        selectedIndex: _index,
         onDestinationSelected: (i) {
           if (i == _routeTabIndex) {
             setState(() {
-              _index = 0;
+              _index = _routeTabIndex;
               _routeIntent++;
             });
             return;
