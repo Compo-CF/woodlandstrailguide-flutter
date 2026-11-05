@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:image_picker_android/image_picker_android.dart';
 import 'package:image_picker_platform_interface/image_picker_platform_interface.dart';
+import 'package:in_app_review/in_app_review.dart';
 import 'package:provider/provider.dart';
 
 import 'stores/trail_store.dart';
@@ -198,6 +199,7 @@ class _RootTabShellState extends State<RootTabShell> {
   late final RoutingState _routingState;
   late final UserDataStore _userDataStore;
   bool _onboardingShown = false;
+  bool _launchReviewConsidered = false;
 
   @override
   void initState() {
@@ -213,6 +215,8 @@ class _RootTabShellState extends State<RootTabShell> {
     _userDataStore = context.read<UserDataStore>();
     _userDataStore.addListener(_checkOnboarding);
     _checkOnboarding();
+    _userDataStore.addListener(_considerLaunchReview);
+    _considerLaunchReview();
   }
 
   void _onRoutingChanged() {
@@ -243,6 +247,35 @@ class _RootTabShellState extends State<RootTabShell> {
     });
   }
 
+  /// Ask for a review a couple of seconds into a launch, for the user who
+  /// keeps coming back without ever routing anywhere.
+  ///
+  /// Until now Android asked in exactly one place — arriving at a routed
+  /// destination — so somebody who opens the app every Saturday to look at
+  /// the map was never asked at all. iOS has had this launch path since it
+  /// shipped (ContentView.considerEngagementPrompts); this brings Android in
+  /// line with it, including the >= 3 launches it requires on top of
+  /// eligibleForReviewRequest's own engagement and 30-day cooldown checks.
+  ///
+  /// Held back until onboarding is done: a review card over the first-run
+  /// walkthrough asks somebody to rate an app they have not yet seen.
+  Future<void> _considerLaunchReview() async {
+    if (_launchReviewConsidered) return;
+    if (!_userDataStore.isLoaded) return;
+    if (!_userDataStore.hasSeenOnboarding) return;
+    if (_userDataStore.appLaunches < 3) return;
+    if (!_userDataStore.eligibleForReviewRequest) return;
+    // Latched before the first await so a notifyListeners() mid-delay cannot
+    // start a second pass and spend two requests on one launch.
+    _launchReviewConsidered = true;
+    await Future<void>.delayed(const Duration(seconds: 2));
+    if (!mounted) return;
+    final review = InAppReview.instance;
+    if (!await review.isAvailable()) return;
+    await review.requestReview();
+    await _userDataStore.markReviewRequested();
+  }
+
   Future<void> _initDeepLinks() async {
     try {
       final initial = await _appLinks.getInitialLink();
@@ -261,6 +294,7 @@ class _RootTabShellState extends State<RootTabShell> {
   void dispose() {
     _routingState.removeListener(_onRoutingChanged);
     _userDataStore.removeListener(_checkOnboarding);
+    _userDataStore.removeListener(_considerLaunchReview);
     _linkSub?.cancel();
     super.dispose();
   }
