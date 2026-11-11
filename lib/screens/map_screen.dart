@@ -69,6 +69,36 @@ class _MapScreenState extends State<MapScreen> {
   static const _cityZoomThreshold = 13.0;
   static const _streetZoomThreshold = 15.0;
 
+  /// Walking-navigation camera. Mirrors iOS
+  /// TrailMapView.Coordinator.navigationDistance/navigationPitch: zoom 17 is
+  /// roughly the ground scale of MapKit's 600m, and the tilt is identical.
+  ///
+  /// Tilting is what makes [buildingsEnabled] mean anything — looking
+  /// straight down, a 3D building renders the same as its footprint. Terrain
+  /// is not the point: The Woodlands has about 63ft of relief township-wide
+  /// (sampled 2026-11-11: 43.2m-62.3m), so the payoff is the Town Center and
+  /// Waterway buildings, not hillshade.
+  static const _navTilt = 55.0;
+  static const _navZoom = 17.0;
+
+  /// Zoom the follow camera returns to. Seeded at [_navZoom] when a walk
+  /// starts and then tracked from [_onCameraIdle], so a user who pinches out
+  /// mid-walk isn't yanked back to 17 by the next GPS fix.
+  double _followZoom = _navZoom;
+
+  /// Smoothed course for the follow camera.
+  ///
+  /// google_maps_flutter has no equivalent of MapKit's
+  /// .followWithHeading, so the bearing has to be driven by hand. Raw
+  /// [Position.heading] cannot be used directly: it reports -1 when unknown,
+  /// and at walking pace the course derived from consecutive fixes swings
+  /// through tens of degrees while the user walks in a straight line. A map
+  /// that spins is worse than a map that does not rotate at all, so the
+  /// course is ignored below a walking-speed floor and low-passed above it.
+  double? _followBearing;
+  static const _bearingMinSpeed = 0.7; // m/s - below this, course is noise
+  static const _bearingSmoothing = 0.25; // 0 = frozen, 1 = raw
+
   /// Off-route auto-reroute: if the user drifts more than this many
   /// meters from the route for longer than the sustained duration, we
   /// silently recompute from their current position to the same
@@ -325,6 +355,11 @@ class _MapScreenState extends State<MapScreen> {
                   myLocationButtonEnabled: false,
                   zoomControlsEnabled: false,
                   compassEnabled: true,
+                  // Extruded 3D buildings, visible only once the camera is
+                  // tilted (see _followCamera). Default is already true on
+                  // Android; set explicitly to mirror iOS showsBuildings and
+                  // to make it survive a future default change.
+                  buildingsEnabled: true,
                 ),
 
                 // Status-bar scrim (QA M-05). Green and purple POI pins were
@@ -569,6 +604,22 @@ class _MapScreenState extends State<MapScreen> {
       routing.updateProgress(progress);
       _hasJoinedRoute = progress.distanceFromRoute <= _offRouteThreshold;
     }
+    // Tilt into the walking view. Seeded from the last known fix rather
+    // than waiting for the first stream event, so the camera is already in
+    // position by the time the user looks down at it.
+    _followBearing = null;
+    _followZoom = _navZoom;
+    final controller = _controller;
+    final seed = _lastKnownPosition;
+    if (controller != null && seed != null) {
+      unawaited(controller.animateCamera(
+        CameraUpdate.newCameraPosition(CameraPosition(
+          target: LatLng(seed.latitude, seed.longitude),
+          zoom: _navZoom,
+          tilt: _navTilt,
+        )),
+      ));
+    }
     unawaited(WakelockPlus.enable());
     await _positionSub?.cancel();
     _positionSub = Geolocator.getPositionStream(
@@ -615,6 +666,22 @@ class _MapScreenState extends State<MapScreen> {
     unawaited(WakelockPlus.disable());
     _offRouteSince = null;
     _hasJoinedRoute = false;
+    // Flatten back out. Keeps whatever zoom the user ended on and drops
+    // only the tilt and rotation, so ending a walk doesn't also re-frame
+    // the map. Mirrors iOS applyNavigationCamera(active: false).
+    final controller = _controller;
+    final last = _lastKnownPosition;
+    if (controller != null && last != null) {
+      unawaited(controller.animateCamera(
+        CameraUpdate.newCameraPosition(CameraPosition(
+          target: LatLng(last.latitude, last.longitude),
+          zoom: _followZoom,
+          tilt: 0,
+          bearing: 0,
+        )),
+      ));
+    }
+    _followBearing = null;
     routing.endNavigation();
   }
 
@@ -677,9 +744,7 @@ class _MapScreenState extends State<MapScreen> {
       unawaited(_afterArrival(userData, hasTipped, summary));
     }
 
-    _controller?.animateCamera(
-      CameraUpdate.newLatLng(LatLng(pos.latitude, pos.longitude)),
-    );
+    _followCamera(pos);
 
     // Off-route auto-reroute: if the user has drifted past the threshold
     // for the sustained duration, silently recompute from their current
@@ -987,10 +1052,46 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
+  /// Moves the follow camera to [pos], keeping the walking tilt and the
+  /// smoothed course.
+  void _followCamera(Position pos) {
+    final controller = _controller;
+    if (controller == null) return;
+    _updateFollowBearing(pos);
+    unawaited(controller.animateCamera(
+      CameraUpdate.newCameraPosition(CameraPosition(
+        target: LatLng(pos.latitude, pos.longitude),
+        zoom: _followZoom,
+        tilt: _navTilt,
+        bearing: _followBearing ?? 0,
+      )),
+    ));
+  }
+
+  /// Folds a new GPS course into [_followBearing].
+  ///
+  /// Takes the short way around the circle, so 350 deg -> 10 deg smooths
+  /// forward through north instead of sweeping backwards through south.
+  /// Fixes below [_bearingMinSpeed], or with no course at all (heading is
+  /// -1 when unknown), leave the bearing where it was rather than snapping
+  /// the map to a direction the user isn't walking.
+  void _updateFollowBearing(Position pos) {
+    if (pos.heading < 0 || pos.speed < _bearingMinSpeed) return;
+    final previous = _followBearing;
+    if (previous == null) {
+      _followBearing = pos.heading;
+      return;
+    }
+    final delta = (pos.heading - previous + 540) % 360 - 180;
+    _followBearing = (previous + delta * _bearingSmoothing + 360) % 360;
+  }
+
   Future<void> _onCameraIdle() async {
     if (_controller == null) return;
     try {
       final zoom = await _controller!.getZoomLevel();
+      // Respect a mid-walk pinch — see _followZoom.
+      _followZoom = zoom;
       final newBand = _bandFor(zoom);
       if (newBand != _zoomBand && mounted) {
         setState(() => _zoomBand = newBand);
