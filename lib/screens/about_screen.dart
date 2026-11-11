@@ -211,9 +211,18 @@ class _AboutScreenState extends State<AboutScreen> {
             onTap: () =>
                 _launch('https://compo-cf.github.io/woodlandstrailguide/support.html'),
           ),
+          const SizedBox(height: 24),
+          const _SectionTitle('After Hours Dev Studio'),
+          ListTile(
+            leading: const Icon(Icons.apps, color: NaturalPalette.forest),
+            title: const Text('More from After Hours Dev Studio'),
+            trailing: const Icon(Icons.open_in_new, size: 16),
+            onTap: () =>
+                _launch('https://compo-cf.github.io/afterhoursdevstudio/'),
+          ),
           const SizedBox(height: 32),
           const Text(
-            'Trail data © The Woodlands Township.\nApp by Anthony Compofelice.',
+            'Trail data © The Woodlands Township.\nMade by After Hours Dev Studio.',
             style: TextStyle(fontSize: 12, color: NaturalPalette.inkMuted),
             textAlign: TextAlign.center,
           ),
