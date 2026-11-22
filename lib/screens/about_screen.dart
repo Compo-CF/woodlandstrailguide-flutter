@@ -209,11 +209,11 @@ class _AboutScreenState extends State<AboutScreen> {
             title: const Text('Support & FAQ'),
             trailing: const Icon(Icons.open_in_new, size: 16),
             onTap: () =>
-                _launch('https://compo-cf.github.io/woodlandstrailguide/support.html'),
+                _launch('https://afterhoursdevstudio.com/woodlands-trail-guide/'),
           ),
           const SizedBox(height: 32),
           const Text(
-            'Trail data © The Woodlands Township.\nApp by Anthony Compofelice.',
+            'Trail data © The Woodlands Township.\nApp by After Hours Dev Studio.',
             style: TextStyle(fontSize: 12, color: NaturalPalette.inkMuted),
             textAlign: TextAlign.center,
           ),
